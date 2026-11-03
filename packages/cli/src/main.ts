@@ -1,6 +1,11 @@
 import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
-import { type ConfirmWrite, connectMcpToolSource, createOpenAiCompatibleClient, runTask } from '@ngomate/core'
+import {
+	type ConfirmWrite,
+	connectMcpToolSource,
+	createOpenAiCompatibleClient,
+	runTask,
+} from '@ngomate/core'
 import { TASKS } from './tasks.js'
 
 const { values, positionals } = parseArgs({
@@ -58,7 +63,10 @@ const confirmWrite: ConfirmWrite = async ({ tool, args }) => {
 	return answer.trim().toLowerCase() === 'y'
 }
 
-const tools = await connectMcpToolSource({ url: values['mcp-url'], getAccessToken: async () => token })
+const tools = await connectMcpToolSource({
+	url: values['mcp-url'],
+	getAccessToken: async () => token,
+})
 try {
 	const run = await runTask({
 		model: createOpenAiCompatibleClient({
@@ -72,7 +80,9 @@ try {
 		confirmWrite,
 		onEvent: (event) => {
 			if (event.type === 'turn') {
-				log(`turn ${event.turn}: ${(event.ms / 1000).toFixed(1)}s, ${event.promptTokens ?? '?'} tokens in`)
+				log(
+					`turn ${event.turn}: ${(event.ms / 1000).toFixed(1)}s, ${event.promptTokens ?? '?'} tokens in`,
+				)
 			} else if (event.type === 'tool_call') {
 				log(`  ${event.kind} ${event.tool} ${JSON.stringify(event.args)}`)
 			} else if (event.type === 'tool_result') {
@@ -87,7 +97,8 @@ try {
 	} else {
 		console.log(`\n${run.answer ?? `[${run.status}] ${run.error ?? ''}`}`)
 		console.error(`\n${run.status}, ${run.turns} turns, ${(run.totalMs / 1000).toFixed(1)}s`)
-		if (run.missingTools.length) console.error(`Not offered by this server: ${run.missingTools.join(', ')}`)
+		if (run.missingTools.length)
+			console.error(`Not offered by this server: ${run.missingTools.join(', ')}`)
 	}
 	process.exitCode = run.status === 'completed' ? 0 : 1
 } finally {

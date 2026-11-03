@@ -1,0 +1,25 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = "Everything an NGOmate host needs"
+permissions = [
+  "allow-store-list",
+  "allow-store-read",
+  "allow-store-write",
+  "allow-store-remove",
+  "allow-secret-get",
+  "allow-secret-set",
+  "allow-secret-delete",
+  "allow-pick-document",
+  "allow-save-document",
+  "allow-model-info",
+  "allow-model-download",
+  "allow-model-cancel-download",
+  "allow-model-remove",
+  "allow-model-import",
+  "allow-runtime-start",
+  "allow-runtime-stop",
+  "allow-addon-start",
+  "allow-addon-send",
+  "allow-addon-stop",
+]

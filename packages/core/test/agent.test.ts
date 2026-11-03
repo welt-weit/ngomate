@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { type TaskProfile, runTask } from '../src/agent.js'
 import type { ToolSource } from '../src/mcp.js'
-import { type ModelClient, type ModelReply, createOpenAiCompatibleClient, stripThinking } from '../src/model.js'
+import {
+	type ModelClient,
+	type ModelReply,
+	createOpenAiCompatibleClient,
+	stripThinking,
+} from '../src/model.js'
 
 const profile: TaskProfile = {
 	id: 'test',
@@ -13,14 +18,21 @@ const profile: TaskProfile = {
 function source(callTool = vi.fn(async () => ({ text: 'result', isError: false }))) {
 	const tools: ToolSource = {
 		listTools: async () =>
-			['search', 'create', 'delete_everything'].map((name) => ({ name, description: name, inputSchema: {} })),
+			['search', 'create', 'delete_everything'].map((name) => ({
+				name,
+				description: name,
+				inputSchema: {},
+			})),
 		callTool,
 		close: async () => {},
 	}
 	return { tools, callTool }
 }
 
-function reply(toolCalls: { name: string; arguments: string }[], content: string | null = null): ModelReply {
+function reply(
+	toolCalls: { name: string; arguments: string }[],
+	content: string | null = null,
+): ModelReply {
 	return {
 		content,
 		toolCalls: toolCalls.map((call, index) => ({ id: `c${index}`, ...call })),
@@ -47,7 +59,10 @@ describe('runTask', () => {
 	})
 
 	it('refuses a tool outside the profile even when the server offers it', async () => {
-		const { model } = scripted(reply([{ name: 'delete_everything', arguments: '{}' }]), reply([], 'ok'))
+		const { model } = scripted(
+			reply([{ name: 'delete_everything', arguments: '{}' }]),
+			reply([], 'ok'),
+		)
 		const { tools, callTool } = source()
 		const run = await runTask({ model, tools, profile, input: 'go' })
 		expect(callTool).not.toHaveBeenCalled()
@@ -77,14 +92,16 @@ describe('runTask', () => {
 			reply([{ name: 'create', arguments: '{"dueAt":"2027-01-15"}' }]),
 			reply([], 'ok'),
 		)
-		const { tools, callTool } = source(vi.fn(async () => ({ text: 'Deadline: 2027-03-01', isError: false })))
+		const { tools, callTool } = source(
+			vi.fn(async () => ({ text: 'Deadline: 2027-03-01', isError: false })),
+		)
 		const confirmWrite = vi.fn(async () => true)
 		const run = await runTask({ model, tools, profile, input: 'go', confirmWrite })
 		expect(confirmWrite).not.toHaveBeenCalled()
 		expect(callTool).toHaveBeenCalledTimes(1)
 		expect(run.calls[1]?.outcome).toBe('unsourced_date')
 		const request = chat.mock.calls[2] as unknown as [{ messages: { content: string }[] }]
-		expect(request[0].messages.at(-1)?.content).toContain('2027-01-15')
+		expect(request[0].messages.at(-2)?.content).toContain('2027-01-15')
 	})
 
 	it('allows a date a read returned, in another format and with a time', async () => {
@@ -93,7 +110,9 @@ describe('runTask', () => {
 			reply([{ name: 'create', arguments: '{"dueAt":"2027-03-01T00:00:00Z"}' }]),
 			reply([], 'ok'),
 		)
-		const { tools, callTool } = source(vi.fn(async () => ({ text: 'Closes 1 March 2027', isError: false })))
+		const { tools, callTool } = source(
+			vi.fn(async () => ({ text: 'Closes 1 March 2027', isError: false })),
+		)
 		await runTask({ model, tools, profile, input: 'go', confirmWrite: async () => true })
 		expect(callTool).toHaveBeenLastCalledWith('create', { dueAt: '2027-03-01T00:00:00Z' })
 	})
@@ -152,7 +171,10 @@ describe('runTask', () => {
 	})
 
 	it('hands bad JSON back to the model instead of calling the tool', async () => {
-		const { model, chat } = scripted(reply([{ name: 'search', arguments: '{oops' }]), reply([], 'ok'))
+		const { model, chat } = scripted(
+			reply([{ name: 'search', arguments: '{oops' }]),
+			reply([], 'ok'),
+		)
 		const { tools, callTool } = source()
 		const run = await runTask({ model, tools, profile, input: 'go' })
 		expect(callTool).not.toHaveBeenCalled()
@@ -209,7 +231,12 @@ describe('runTask', () => {
 		const { model } = scripted(reply([], 'ok'))
 		const { tools, callTool } = source()
 		await expect(
-			runTask({ model, tools, profile: { ...profile, preload: [{ tool: 'create', args: {} }] }, input: 'go' }),
+			runTask({
+				model,
+				tools,
+				profile: { ...profile, preload: [{ tool: 'create', args: {} }] },
+				input: 'go',
+			}),
 		).rejects.toThrow('not a read tool')
 		expect(callTool).not.toHaveBeenCalled()
 	})
@@ -235,7 +262,9 @@ describe('createOpenAiCompatibleClient', () => {
 			baseUrl: 'http://x/v1',
 			model: 'm',
 			fetch: respond({
-				choices: [{ message: { tool_calls: [{ id: 'a', function: { name: 't', arguments: { q: 1 } } }] } }],
+				choices: [
+					{ message: { tool_calls: [{ id: 'a', function: { name: 't', arguments: { q: 1 } } }] } },
+				],
 			}),
 		})
 		const result = await client.chat({ messages: [], tools: [] })

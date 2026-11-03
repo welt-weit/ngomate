@@ -1,0 +1,28 @@
+{
+	"name": "@ngomate/tauri",
+	"version": "0.0.1",
+	"license": "MIT",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": ["dist", "src"],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.32.1",
+		"@ngomate/core": "workspace:*",
+		"@ngomate/ui": "workspace:*",
+		"@tauri-apps/api": "^2.10.1",
+		"@tauri-apps/plugin-http": "^2.8.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"typescript": "~5.7.0"
+	}
+}

@@ -1,0 +1,380 @@
+/*
+ * Every color and size is a variable, so a host restyles the interface by setting these on any parent
+ * element. Nothing here reaches outside .ngm-app.
+ */
+.ngm-app {
+	--ngm-bg: #ffffff;
+	--ngm-panel: #f6f7f8;
+	--ngm-line: #dfe2e6;
+	--ngm-text: #1b1f24;
+	--ngm-muted: #5c6670;
+	--ngm-accent: #1f6f5c;
+	--ngm-accent-text: #ffffff;
+	--ngm-warn-bg: #fff6e0;
+	--ngm-warn-text: #6a4b00;
+	--ngm-error: #b3261e;
+	--ngm-radius: 8px;
+	--ngm-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+	display: flex;
+	height: 100vh;
+	font: 15px / 1.5 var(--ngm-font);
+	color: var(--ngm-text);
+	background: var(--ngm-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+	.ngm-app {
+		--ngm-bg: #16191d;
+		--ngm-panel: #1f2328;
+		--ngm-line: #343a41;
+		--ngm-text: #e7eaee;
+		--ngm-muted: #a2acb6;
+		--ngm-accent: #4fb89f;
+		--ngm-accent-text: #0d1512;
+		--ngm-warn-bg: #3a2f12;
+		--ngm-warn-text: #f3dc9a;
+		--ngm-error: #ff8a80;
+	}
+}
+
+.ngm-app *,
+.ngm-app *::before,
+.ngm-app *::after {
+	box-sizing: border-box;
+}
+
+.ngm-app button,
+.ngm-app input,
+.ngm-app select,
+.ngm-app textarea {
+	font: inherit;
+	color: inherit;
+}
+
+.ngm-app button {
+	padding: 6px 12px;
+	cursor: pointer;
+	background: var(--ngm-bg);
+	border: 1px solid var(--ngm-line);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-app button:disabled {
+	cursor: default;
+	opacity: 0.55;
+}
+
+.ngm-app :focus-visible {
+	outline: 2px solid var(--ngm-accent);
+	outline-offset: 1px;
+}
+
+.ngm-app .ngm-primary {
+	color: var(--ngm-accent-text);
+	background: var(--ngm-accent);
+	border-color: var(--ngm-accent);
+}
+
+.ngm-app .ngm-quiet {
+	padding: 2px 6px;
+	color: var(--ngm-muted);
+	background: none;
+	border: none;
+}
+
+.ngm-app input,
+.ngm-app select,
+.ngm-app textarea {
+	width: 100%;
+	padding: 8px 10px;
+	background: var(--ngm-bg);
+	border: 1px solid var(--ngm-line);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-app input[type="checkbox"] {
+	width: auto;
+}
+
+.ngm-loading {
+	align-items: center;
+	justify-content: center;
+}
+
+.ngm-sidebar {
+	display: flex;
+	flex: 0 0 260px;
+	flex-direction: column;
+	gap: 4px;
+	padding: 14px;
+	overflow: hidden;
+	background: var(--ngm-panel);
+	border-right: 1px solid var(--ngm-line);
+}
+
+.ngm-brand {
+	margin: 0 0 10px;
+	font-size: 18px;
+}
+
+.ngm-side-title {
+	margin: 16px 0 4px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--ngm-muted);
+}
+
+.ngm-side-list {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.ngm-side-item {
+	display: flex;
+	align-items: center;
+}
+
+.ngm-side-bottom {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding-top: 10px;
+	border-top: 1px solid var(--ngm-line);
+}
+
+.ngm-app .ngm-nav {
+	flex: 1;
+	min-width: 0;
+	padding: 5px 8px;
+	overflow: hidden;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	background: none;
+	border: none;
+}
+
+.ngm-app .ngm-nav:hover,
+.ngm-app .ngm-nav-active {
+	background: var(--ngm-line);
+}
+
+.ngm-main {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	overflow-y: auto;
+}
+
+.ngm-chat {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.ngm-messages {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 12px;
+	width: 100%;
+	max-width: 800px;
+	padding: 24px;
+	margin: 0 auto;
+	overflow-y: auto;
+}
+
+.ngm-empty {
+	margin: auto;
+	text-align: center;
+}
+
+.ngm-message {
+	overflow-wrap: anywhere;
+}
+
+.ngm-user {
+	align-self: flex-end;
+	max-width: 85%;
+	max-height: 320px;
+	padding: 8px 12px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	background: var(--ngm-panel);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-assistant > :first-child {
+	margin-top: 0;
+}
+
+.ngm-assistant table {
+	border-collapse: collapse;
+}
+
+.ngm-assistant td,
+.ngm-assistant th {
+	padding: 4px 8px;
+	border: 1px solid var(--ngm-line);
+}
+
+.ngm-tool-line,
+.ngm-muted {
+	margin: 2px 0;
+	font-size: 13px;
+	color: var(--ngm-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.ngm-working {
+		animation: ngm-pulse 1.6s ease-in-out infinite;
+	}
+}
+
+@keyframes ngm-pulse {
+	50% {
+		opacity: 0.45;
+	}
+}
+
+.ngm-notice {
+	padding: 8px 12px;
+	margin: 8px 0;
+	font-size: 13px;
+	color: var(--ngm-warn-text);
+	background: var(--ngm-warn-bg);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-notice p {
+	margin: 2px 0;
+}
+
+.ngm-error {
+	font-size: 14px;
+	color: var(--ngm-error);
+}
+
+.ngm-confirm {
+	padding: 12px;
+	background: var(--ngm-panel);
+	border: 1px solid var(--ngm-accent);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-pre {
+	max-height: 280px;
+	padding: 8px;
+	overflow: auto;
+	font-size: 13px;
+	white-space: pre-wrap;
+	background: var(--ngm-bg);
+	border: 1px solid var(--ngm-line);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-composer {
+	width: 100%;
+	max-width: 800px;
+	padding: 0 24px 16px;
+	margin: 0 auto;
+}
+
+.ngm-app .ngm-composer textarea {
+	display: block;
+	resize: vertical;
+}
+
+.ngm-composer-actions {
+	margin-top: 8px;
+}
+
+.ngm-chip-line {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+	margin-bottom: 6px;
+}
+
+.ngm-chip {
+	padding: 1px 8px;
+	font-size: 12px;
+	background: var(--ngm-panel);
+	border: 1px solid var(--ngm-line);
+	border-radius: 999px;
+}
+
+.ngm-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+}
+
+.ngm-grow {
+	flex: 1;
+}
+
+.ngm-answer-actions {
+	margin-top: 4px;
+}
+
+.ngm-panel {
+	width: 100%;
+	max-width: 720px;
+	padding: 24px;
+	margin: 0 auto;
+}
+
+.ngm-panel h2 {
+	margin-top: 0;
+}
+
+.ngm-panel h3 {
+	margin: 24px 0 8px;
+	font-size: 15px;
+}
+
+.ngm-card {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 12px;
+	margin-bottom: 10px;
+	border: 1px solid var(--ngm-line);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-card progress {
+	width: 100%;
+}
+
+.ngm-form {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 10px;
+}
+
+.ngm-form label {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 14px;
+}
+
+.ngm-app .ngm-inline {
+	display: inline-flex;
+	flex-direction: row;
+	gap: 6px;
+	align-items: center;
+	font-size: 14px;
+}

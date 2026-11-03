@@ -1,0 +1,23 @@
+[package]
+name = "ngomate-desktop"
+version = "0.0.1"
+description = "NGOmate desktop app"
+license = "MIT"
+edition = "2021"
+rust-version = "1.80.0"
+
+[lib]
+name = "ngomate_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+tauri = { version = "2.10", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls"] }
+tauri-plugin-opener = "2"
+tauri-plugin-ngomate = { path = "../../../packages/tauri" }
+
+[workspace]

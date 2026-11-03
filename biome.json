@@ -1,9 +1,13 @@
 {
 	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-	"organizeImports": { "enabled": true },
+	"organizeImports": {
+		"enabled": true
+	},
 	"linter": {
 		"enabled": true,
-		"rules": { "recommended": true }
+		"rules": {
+			"recommended": true
+		}
 	},
 	"formatter": {
 		"enabled": true,
@@ -15,5 +19,13 @@
 			"quoteStyle": "single",
 			"semicolons": "asNeeded"
 		}
+	},
+	"files": {
+		"ignore": [
+			"**/dist/**",
+			"**/gen/**",
+			"**/runtime/**",
+			"**/target/**"
+		]
 	}
 }

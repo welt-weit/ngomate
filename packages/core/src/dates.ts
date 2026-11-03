@@ -15,8 +15,14 @@ const MONTHS = [
 const MONTH = `(${MONTHS.join('|')}|${MONTHS.map((month) => month.slice(0, 3)).join('|')})\\.?`
 
 const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})/g
-const DAY_MONTH_YEAR = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH},?\\s+(\\d{4})\\b`, 'gi')
-const MONTH_DAY_YEAR = new RegExp(`\\b${MONTH}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})\\b`, 'gi')
+const DAY_MONTH_YEAR = new RegExp(
+	`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH},?\\s+(\\d{4})\\b`,
+	'gi',
+)
+const MONTH_DAY_YEAR = new RegExp(
+	`\\b${MONTH}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})\\b`,
+	'gi',
+)
 
 function isoDate(year: string, month: number, day: string): string {
 	return `${year}-${String(month).padStart(2, '0')}-${day.padStart(2, '0')}`
