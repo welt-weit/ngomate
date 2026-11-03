@@ -10,6 +10,7 @@
 	--ngm-muted: #5c6670;
 	--ngm-accent: #1f6f5c;
 	--ngm-accent-text: #ffffff;
+	--ngm-link: #17594a;
 	--ngm-warn-bg: #fff6e0;
 	--ngm-warn-text: #6a4b00;
 	--ngm-error: #b3261e;
@@ -32,6 +33,7 @@
 		--ngm-muted: #a2acb6;
 		--ngm-accent: #4fb89f;
 		--ngm-accent-text: #0d1512;
+		--ngm-link: #7fd8c3;
 		--ngm-warn-bg: #3a2f12;
 		--ngm-warn-text: #f3dc9a;
 		--ngm-error: #ff8a80;
@@ -63,6 +65,10 @@
 .ngm-app button:disabled {
 	cursor: default;
 	opacity: 0.55;
+}
+
+.ngm-app a {
+	color: var(--ngm-link);
 }
 
 .ngm-app :focus-visible {
@@ -139,6 +145,10 @@
 	align-items: center;
 }
 
+.ngm-app .ngm-side-item .ngm-nav {
+	flex: 1;
+}
+
 .ngm-side-bottom {
 	display: flex;
 	flex-direction: column;
@@ -148,7 +158,7 @@
 }
 
 .ngm-app .ngm-nav {
-	flex: 1;
+	flex: 0 0 auto;
 	min-width: 0;
 	padding: 5px 8px;
 	overflow: hidden;

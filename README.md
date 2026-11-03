@@ -36,6 +36,8 @@ The first run downloads the pinned [llama.cpp](https://github.com/ggml-org/llama
 | `packages/cli` | A small command-line host. |
 | `apps/desktop` | The standalone desktop app. |
 
+To see every screen without a model or the desktop app, run `yarn storybook` and open http://localhost:6006. It uses made-up data.
+
 Checks: `yarn lint`, `yarn typecheck`, `yarn test`, and `cargo test` in `packages/tauri`.
 
 ## Contributing

@@ -88,10 +88,13 @@ export type ChatDeps = {
 function connectTools(
 	host: NgomateHost,
 	addons: Addon[],
+	withMemory: boolean,
 	onProblem: (name: string) => void,
 ): Promise<ToolSource> {
 	return (async () => {
-		const sources = [{ id: 'memory', source: createMemoryToolSource(host.memory) }]
+		const sources = withMemory
+			? [{ id: 'memory', source: createMemoryToolSource(host.memory) }]
+			: []
 		for (const addon of addons.filter((candidate) => candidate.enabled)) {
 			try {
 				const source = await host.connectAddon(addon)
@@ -161,6 +164,16 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				.filter(Boolean)
 				.join('\n\n')
 			if (!input.trim()) return
+			// Checked here and not left to the model, which may answer from memory with calls that do not exist.
+			if (
+				task?.needs === 'addon' &&
+				!depsRef.current.settings.addons.some((addon) => addon.enabled)
+			) {
+				setError(
+					`${task.title} needs a connected tool. Add one under Add-ons, such as a search service or Action Network Worldwide.`,
+				)
+				return
+			}
 
 			setBusy(true)
 			setError(null)
@@ -182,7 +195,8 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 
 				const model = await depsRef.current.getModel()
 				const seen = new Set<string>()
-				tools = await connectTools(host, depsRef.current.settings.addons, (name) => {
+				// A ready-made task gets notes as context, not as tools that distract a small model from the job.
+				tools = await connectTools(host, depsRef.current.settings.addons, !task, (name) => {
 					if (!seen.has(name)) setProblems((known) => [...known, name])
 					seen.add(name)
 				})

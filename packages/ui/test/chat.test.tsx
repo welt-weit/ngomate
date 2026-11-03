@@ -152,6 +152,31 @@ describe('chat', () => {
 		expect(request.messages.at(1)?.content).toContain('Our notes.')
 	})
 
+	it('does not ask the model to find funding when nothing is connected', async () => {
+		const { host, chat } = makeHost(
+			[],
+			{},
+			{
+				tasks: [
+					{
+						id: 'find',
+						title: 'Find funding',
+						description: '',
+						ask: 'Who you are',
+						tools: 'all',
+						needs: 'addon',
+						instructions: 'Find.',
+					},
+				],
+			},
+		)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Find funding' }))
+		await typeAndSend('A water NGO')
+		expect((await screen.findByRole('alert')).textContent).toContain('needs a connected tool')
+		expect(chat).not.toHaveBeenCalled()
+	})
+
 	it('says when no model is chosen, and offers no broken send', async () => {
 		const { host } = makeHost([], { model: null })
 		render(<NgomateApp host={host} />)

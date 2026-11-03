@@ -196,8 +196,8 @@ export function Chat({
 					</div>
 				)}
 				{messages.map((message, index) => (
-					// biome-ignore lint/suspicious/noArrayIndexKey: messages only ever grow at the end
 					<MessageView
+						// biome-ignore lint/suspicious/noArrayIndexKey: messages only ever grow at the end
 						key={index}
 						message={message}
 						notice={notices[index]}

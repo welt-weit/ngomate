@@ -25,7 +25,8 @@
 			"**/dist/**",
 			"**/gen/**",
 			"**/runtime/**",
-			"**/target/**"
+			"**/target/**",
+			"**/storybook-static/**"
 		]
 	}
 }

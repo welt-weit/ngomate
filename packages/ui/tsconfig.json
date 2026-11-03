@@ -5,5 +5,5 @@
 		"lib": ["ES2023", "DOM", "DOM.Iterable"],
 		"noEmit": true
 	},
-	"include": ["src", "test"]
+	"include": ["src", "test", "stories", ".storybook"]
 }

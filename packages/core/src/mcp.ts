@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker'
 import type { ToolDefinition } from './model.js'
 
 export type ToolResult = { text: string; isError: boolean }
@@ -43,7 +44,11 @@ async function httpTransport(options: McpToolSourceOptions): Promise<Transport> 
 
 export async function connectMcpToolSource(options: McpToolSourceOptions): Promise<ToolSource> {
 	const transport = options.transport ?? (await httpTransport(options))
-	const client = new Client({ name: options.clientName ?? 'ngomate', version: '0.0.1' })
+	// The default validator compiles schemas with eval, which a desktop app's security policy blocks.
+	const client = new Client(
+		{ name: options.clientName ?? 'ngomate', version: '0.0.1' },
+		{ jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+	)
 	await client.connect(transport)
 
 	return {

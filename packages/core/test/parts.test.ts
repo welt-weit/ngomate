@@ -201,6 +201,11 @@ Use only the material given.
 		})
 	})
 
+	it('reads what a task needs', () => {
+		expect(parseTaskFile(file.replace('tools: search, read', 'needs: addon')).needs).toBe('addon')
+		expect(parseTaskFile(file).needs).toBeUndefined()
+	})
+
 	it('understands none and all', () => {
 		expect(taskFileToProfile(parseTaskFile(file.replace('search, read', 'all'))).allTools).toBe(
 			true,
