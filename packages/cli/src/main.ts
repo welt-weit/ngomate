@@ -12,16 +12,32 @@ const { values, positionals } = parseArgs({
 		think: { type: 'boolean', default: false },
 		json: { type: 'boolean', default: false },
 		'decline-writes': { type: 'boolean', default: false },
+		call: { type: 'string' },
 	},
 })
 
 const [taskId, ...rest] = positionals
-const profile = taskId ? TASKS[taskId] : undefined
+const task = taskId ? TASKS[taskId] : undefined
 const input = rest.join(' ')
-if (!profile || !input) {
-	console.error(`Usage: ngomate <${Object.keys(TASKS).join('|')}> "what you want" [--model name]`)
+if (!task || !input) {
+	console.error(
+		`Usage: ngomate <${Object.keys(TASKS).join('|')}> "what you want" [--model name] [--call opportunity-id]`,
+	)
 	process.exit(2)
 }
+if (task.id === 'call-to-tasks' && !values.call) {
+	console.error('call-to-tasks needs --call with the id of one funding call.')
+	process.exit(2)
+}
+const profile = values.call
+	? {
+			...task,
+			preload: [
+				{ tool: 'get_opportunity', args: { opportunityId: values.call } },
+				...(task.preload ?? []),
+			],
+		}
+	: task
 
 // From the environment only, so a token never lands in shell history or a process list.
 const token = process.env.NGOMATE_MCP_TOKEN

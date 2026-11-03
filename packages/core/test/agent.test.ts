@@ -71,6 +71,79 @@ describe('runTask', () => {
 		expect(callTool).toHaveBeenCalledWith('create', { a: 1 })
 	})
 
+	it('refuses a date no tool returned, before asking for confirmation', async () => {
+		const { model, chat } = scripted(
+			reply([{ name: 'search', arguments: '{}' }]),
+			reply([{ name: 'create', arguments: '{"dueAt":"2027-01-15"}' }]),
+			reply([], 'ok'),
+		)
+		const { tools, callTool } = source(vi.fn(async () => ({ text: 'Deadline: 2027-03-01', isError: false })))
+		const confirmWrite = vi.fn(async () => true)
+		const run = await runTask({ model, tools, profile, input: 'go', confirmWrite })
+		expect(confirmWrite).not.toHaveBeenCalled()
+		expect(callTool).toHaveBeenCalledTimes(1)
+		expect(run.calls[1]?.outcome).toBe('unsourced_date')
+		const request = chat.mock.calls[2] as unknown as [{ messages: { content: string }[] }]
+		expect(request[0].messages.at(-1)?.content).toContain('2027-01-15')
+	})
+
+	it('allows a date a read returned, in another format and with a time', async () => {
+		const { model } = scripted(
+			reply([{ name: 'search', arguments: '{}' }]),
+			reply([{ name: 'create', arguments: '{"dueAt":"2027-03-01T00:00:00Z"}' }]),
+			reply([], 'ok'),
+		)
+		const { tools, callTool } = source(vi.fn(async () => ({ text: 'Closes 1 March 2027', isError: false })))
+		await runTask({ model, tools, profile, input: 'go', confirmWrite: async () => true })
+		expect(callTool).toHaveBeenLastCalledWith('create', { dueAt: '2027-03-01T00:00:00Z' })
+	})
+
+	it('allows a date from a preload or the request, but not from a failed read', async () => {
+		const write = (date: string) => reply([{ name: 'create', arguments: `{"dueAt":"${date}"}` }])
+		const preload = [{ tool: 'search', args: {} }]
+		const confirmWrite = async () => true
+
+		const fromPreload = source(vi.fn(async () => ({ text: '2027-03-01', isError: false })))
+		await runTask({
+			model: scripted(write('2027-03-01'), reply([], 'ok')).model,
+			tools: fromPreload.tools,
+			profile: { ...profile, preload },
+			input: 'go',
+			confirmWrite,
+		})
+		expect(fromPreload.callTool).toHaveBeenLastCalledWith('create', { dueAt: '2027-03-01' })
+
+		const fromInput = source()
+		await runTask({
+			model: scripted(write('2027-04-02'), reply([], 'ok')).model,
+			tools: fromInput.tools,
+			profile,
+			input: 'due on April 2, 2027',
+			confirmWrite,
+		})
+		expect(fromInput.callTool).toHaveBeenCalledWith('create', { dueAt: '2027-04-02' })
+
+		const failedRead = source(vi.fn(async () => ({ text: '2027-03-01', isError: true })))
+		const run = await runTask({
+			model: scripted(write('2027-03-01'), reply([], 'ok')).model,
+			tools: failedRead.tools,
+			profile: { ...profile, preload },
+			input: 'go',
+			confirmWrite,
+		})
+		expect(run.calls.at(-1)?.outcome).toBe('unsourced_date')
+	})
+
+	it('finds a date nested in the arguments or written in words', async () => {
+		const { model } = scripted(
+			reply([{ name: 'create', arguments: '{"items":[{"note":"finish by 15 Jan 2027"}]}' }]),
+			reply([], 'ok'),
+		)
+		const { tools, callTool } = source()
+		await runTask({ model, tools, profile, input: 'go', confirmWrite: async () => true })
+		expect(callTool).not.toHaveBeenCalled()
+	})
+
 	it('does not ask for confirmation on a read', async () => {
 		const { model } = scripted(reply([{ name: 'search', arguments: '{}' }]), reply([], 'ok'))
 		const confirmWrite = vi.fn(async () => true)

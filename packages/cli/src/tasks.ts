@@ -14,10 +14,10 @@ export const TASKS: Record<string, TaskProfile> = {
 	'call-to-tasks': {
 		id: 'call-to-tasks',
 		instructions:
-			'Turn one funding call into tasks in one workspace. Read the call, then create one task per step ' +
-			'using the id of a workspace listed below. ' +
-			'Base due dates only on the deadline the call states. If it states none, set no due date.',
-		readTools: ['get_opportunity', 'search_opportunities', 'search_workspaces'],
+			'Turn the funding call below into tasks in one workspace. Create one task per step using the id of ' +
+			'a workspace listed below. Use only the deadline the call states as a due date. If it states none, ' +
+			'set no due date.',
+		readTools: ['get_opportunity', 'search_workspaces'],
 		writeTools: ['create_workspace_deliverable'],
 		preload: [LIST_WORKSPACES],
 	},

@@ -1,3 +1,4 @@
+import { findUnsourcedDates } from './dates.js'
 import type { ToolResult, ToolSource } from './mcp.js'
 import type { ChatMessage, ModelClient, ToolCall, ToolDefinition } from './model.js'
 
@@ -29,7 +30,7 @@ export type AgentEvent =
 	| { type: 'tool_result'; tool: string; isError: boolean; chars: number }
 	| { type: 'refused'; tool: string; reason: RefusalReason }
 
-export type RefusalReason = 'not_allowed' | 'invalid_arguments' | 'declined'
+export type RefusalReason = 'not_allowed' | 'invalid_arguments' | 'unsourced_date' | 'declined'
 
 export type TaskRecord = {
 	tool: string
@@ -97,6 +98,8 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 	)
 
 	const calls: TaskRecord[] = []
+	// What a written date may come from: the request, the host's context and successful reads.
+	const dateSources = [input, options.context ?? '']
 	const preloaded: string[] = []
 	for (const { tool, args } of profile.preload ?? []) {
 		// Same boundary as a model's call: preload cannot reach a write or a tool outside the profile.
@@ -105,6 +108,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		const result = await tools.callTool(tool, args)
 		calls.push({ tool, args, kind: 'read', outcome: result.isError ? 'tool_error' : 'ok' })
 		onEvent?.({ type: 'tool_result', tool, isError: result.isError, chars: result.text.length })
+		if (!result.isError) dateSources.push(result.text)
 		preloaded.push(`Result of ${tool}:\n${result.isError ? `Error: ${result.text}` : result.text}`)
 	}
 
@@ -185,6 +189,19 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 			return refuse('invalid_arguments', null, kind, 'The arguments were not a valid JSON object.')
 		}
 
+		// Checked before the person is asked: a plausible date is easy to approve without noticing.
+		if (kind === 'write') {
+			const unsourced = findUnsourcedDates(args, dateSources)
+			if (unsourced.length) {
+				return refuse(
+					'unsourced_date',
+					args,
+					kind,
+					`No tool returned these dates: ${unsourced.join(', ')}. Use a date a tool returned, or leave the date out.`,
+				)
+			}
+		}
+
 		emit?.({ type: 'tool_call', tool: call.name, args, kind })
 		if (kind === 'write') {
 			const approved = confirmWrite ? await confirmWrite({ tool: call.name, args }) : false
@@ -201,6 +218,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		}
 		record.push({ tool: call.name, args, kind, outcome: result.isError ? 'tool_error' : 'ok' })
 		emit?.({ type: 'tool_result', tool: call.name, isError: result.isError, chars: result.text.length })
+		if (kind === 'read' && !result.isError) dateSources.push(result.text)
 		return { outcome: result.isError ? 'tool_error' : 'ok', text: result.text }
 	}
 }
