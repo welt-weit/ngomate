@@ -1,0 +1,18 @@
+{
+	"name": "@ngomate/cli",
+	"version": "0.0.1",
+	"license": "MIT",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"ngomate": "tsx src/main.ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@ngomate/core": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"tsx": "^4.19.0"
+	}
+}

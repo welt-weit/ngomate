@@ -1,0 +1,26 @@
+{
+	"name": "@ngomate/core",
+	"version": "0.0.1",
+	"license": "MIT",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"src"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.32.1"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0"
+	}
+}
