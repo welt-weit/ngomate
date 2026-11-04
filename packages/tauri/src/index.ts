@@ -93,23 +93,7 @@ export function createTauriHost(options: { appName: string; tasks: TaskFile[] })
 				name: 'settings',
 				text: JSON.stringify(settings, null, 2),
 			}),
-		async listConversations() {
-			const entries = await call<Entry[]>('store_list', { area: 'conversations' })
-			const stored = await Promise.all(
-				entries.map((entry) =>
-					call<string | null>('store_read', { area: 'conversations', name: entry.name }),
-				),
-			)
-			return stored.flatMap((text) => {
-				if (!text) return []
-				try {
-					const { id, title, updatedAt } = JSON.parse(text) as Conversation
-					return [{ id, title, updatedAt }]
-				} catch {
-					return []
-				}
-			})
-		},
+		listConversations: () => call('conversation_list'),
 		async readConversation(id) {
 			const text = await call<string | null>('store_read', { area: 'conversations', name: id })
 			return text ? (JSON.parse(text) as Conversation) : null

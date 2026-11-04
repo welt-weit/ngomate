@@ -1,43 +1,16 @@
 /*
- * Every color and size is a variable, so a host restyles the interface by setting these on any parent
- * element. Nothing here reaches outside .ngm-app.
+ * Structure only. Every color and the fonts come from variables, read from any parent element, so the
+ * interface takes on the look of whatever it sits inside. Text color and font are inherited when no
+ * variable is set. A host with no theme of its own also imports default-theme.css.
  */
 .ngm-app {
-	--ngm-bg: #ffffff;
-	--ngm-panel: #f6f7f8;
-	--ngm-line: #dfe2e6;
-	--ngm-text: #1b1f24;
-	--ngm-muted: #5c6670;
-	--ngm-accent: #1f6f5c;
-	--ngm-accent-text: #ffffff;
-	--ngm-link: #17594a;
-	--ngm-warn-bg: #fff6e0;
-	--ngm-warn-text: #6a4b00;
-	--ngm-error: #b3261e;
-	--ngm-radius: 8px;
-	--ngm-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-
 	display: flex;
-	height: 100vh;
-	font: 15px / 1.5 var(--ngm-font);
-	color: var(--ngm-text);
-	background: var(--ngm-bg);
-}
-
-@media (prefers-color-scheme: dark) {
-	.ngm-app {
-		--ngm-bg: #16191d;
-		--ngm-panel: #1f2328;
-		--ngm-line: #343a41;
-		--ngm-text: #e7eaee;
-		--ngm-muted: #a2acb6;
-		--ngm-accent: #4fb89f;
-		--ngm-accent-text: #0d1512;
-		--ngm-link: #7fd8c3;
-		--ngm-warn-bg: #3a2f12;
-		--ngm-warn-text: #f3dc9a;
-		--ngm-error: #ff8a80;
-	}
+	height: 100%;
+	font-family: var(--ngm-font, inherit);
+	font-size: 15px;
+	line-height: 1.5;
+	color: var(--ngm-text, inherit);
+	background: var(--ngm-bg, transparent);
 }
 
 .ngm-app *,
@@ -46,15 +19,14 @@
 	box-sizing: border-box;
 }
 
-.ngm-app button,
-.ngm-app input,
-.ngm-app select,
-.ngm-app textarea {
+/* On NGOmate's own controls only, so a host's components keep their look. */
+.ngm-button,
+.ngm-input {
 	font: inherit;
 	color: inherit;
 }
 
-.ngm-app button {
+.ngm-button {
 	padding: 6px 12px;
 	cursor: pointer;
 	background: var(--ngm-bg);
@@ -62,45 +34,41 @@
 	border-radius: var(--ngm-radius);
 }
 
-.ngm-app button:disabled {
+.ngm-button:disabled {
 	cursor: default;
 	opacity: 0.55;
+}
+
+.ngm-button:focus-visible,
+.ngm-input:focus-visible,
+.ngm-app input[type="checkbox"]:focus-visible {
+	outline: 2px solid var(--ngm-accent);
+	outline-offset: 1px;
 }
 
 .ngm-app a {
 	color: var(--ngm-link);
 }
 
-.ngm-app :focus-visible {
-	outline: 2px solid var(--ngm-accent);
-	outline-offset: 1px;
-}
-
-.ngm-app .ngm-primary {
+.ngm-button.ngm-primary {
 	color: var(--ngm-accent-text);
 	background: var(--ngm-accent);
 	border-color: var(--ngm-accent);
 }
 
-.ngm-app .ngm-quiet {
+.ngm-button.ngm-quiet {
 	padding: 2px 6px;
 	color: var(--ngm-muted);
 	background: none;
 	border: none;
 }
 
-.ngm-app input,
-.ngm-app select,
-.ngm-app textarea {
+.ngm-input {
 	width: 100%;
 	padding: 8px 10px;
 	background: var(--ngm-bg);
 	border: 1px solid var(--ngm-line);
 	border-radius: var(--ngm-radius);
-}
-
-.ngm-app input[type="checkbox"] {
-	width: auto;
 }
 
 .ngm-loading {
@@ -145,7 +113,7 @@
 	align-items: center;
 }
 
-.ngm-app .ngm-side-item .ngm-nav {
+.ngm-side-item > :first-child {
 	flex: 1;
 }
 
@@ -157,7 +125,7 @@
 	border-top: 1px solid var(--ngm-line);
 }
 
-.ngm-app .ngm-nav {
+.ngm-button.ngm-nav {
 	flex: 0 0 auto;
 	min-width: 0;
 	padding: 5px 8px;
@@ -169,8 +137,8 @@
 	border: none;
 }
 
-.ngm-app .ngm-nav:hover,
-.ngm-app .ngm-nav-active {
+.ngm-button.ngm-nav:hover,
+.ngm-button.ngm-nav-active {
 	background: var(--ngm-line);
 }
 
@@ -201,6 +169,11 @@
 	overflow-y: auto;
 }
 
+/* A long conversation scrolls. It must not squeeze the messages to fit. */
+.ngm-messages > * {
+	flex-shrink: 0;
+}
+
 .ngm-empty {
 	margin: auto;
 	text-align: center;
@@ -223,6 +196,66 @@
 
 .ngm-assistant > :first-child {
 	margin-top: 0;
+}
+
+/* Set here, because a host's CSS reset can flatten headings and lists. */
+.ngm-assistant h1,
+.ngm-assistant h2,
+.ngm-assistant h3,
+.ngm-panel h2,
+.ngm-panel h3,
+.ngm-empty h2,
+.ngm-brand {
+	font-family: var(--ngm-heading-font, inherit);
+	font-weight: 700;
+	line-height: 1.25;
+}
+
+.ngm-assistant h1 {
+	margin: 18px 0 8px;
+	font-size: 22px;
+}
+
+.ngm-assistant h2,
+.ngm-panel h2,
+.ngm-empty h2 {
+	margin: 16px 0 8px;
+	font-size: 19px;
+}
+
+.ngm-assistant h3 {
+	margin: 14px 0 6px;
+	font-size: 16px;
+}
+
+.ngm-assistant p {
+	margin: 8px 0;
+}
+
+.ngm-assistant ul,
+.ngm-assistant ol {
+	padding-left: 22px;
+	margin: 8px 0;
+}
+
+.ngm-assistant ul {
+	list-style: disc;
+}
+
+.ngm-assistant ol {
+	list-style: decimal;
+}
+
+.ngm-assistant strong {
+	font-weight: 700;
+}
+
+.ngm-assistant code {
+	padding: 1px 4px;
+	font-family: ui-monospace, monospace;
+	font-size: 0.9em;
+	background: var(--ngm-panel);
+	border-radius: 4px;
 }
 
 .ngm-assistant table {
@@ -297,7 +330,7 @@
 	margin: 0 auto;
 }
 
-.ngm-app .ngm-composer textarea {
+.ngm-composer textarea {
 	display: block;
 	resize: vertical;
 }
@@ -381,7 +414,12 @@
 	font-size: 14px;
 }
 
-.ngm-app .ngm-inline {
+.ngm-tool-switch {
+	display: flex;
+	margin: 2px 0;
+}
+
+.ngm-inline {
 	display: inline-flex;
 	flex-direction: row;
 	gap: 6px;

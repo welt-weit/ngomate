@@ -6,8 +6,8 @@ use std::io::Read;
 use std::path::Path;
 
 /// More than any local model can read, kept low so a huge file cannot fill the interface's memory.
-const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
-const MAX_TEXT_CHARS: usize = 400_000;
+const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_TEXT_CHARS: usize = 100_000;
 
 #[derive(Serialize, Debug)]
 pub struct Document {

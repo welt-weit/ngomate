@@ -238,6 +238,39 @@ describe('open chat', () => {
 	})
 })
 
+describe('a long chain of tool calls', () => {
+	it('gives up the oldest results to stay within what the model can hold', async () => {
+		const { model, chat } = scripted(
+			call('search', { q: 1 }),
+			call('search', { q: 2 }),
+			say('done'),
+		)
+		const { tools } = source(vi.fn(async () => ({ text: 'r'.repeat(500), isError: false })))
+		await runTask({ model, tools, profile, input: 'go', maxInputChars: 800 })
+		const last = chat.mock.calls.at(-1) as unknown as [
+			{ messages: { role: string; content: string }[] },
+		]
+		const results = last[0].messages.filter((message) => message.role === 'tool')
+		expect(results[0]?.content).toContain('Removed to make room')
+		expect(results[1]?.content).toBe('r'.repeat(500))
+	})
+
+	it('lets the model read a removed result again', async () => {
+		const { model } = scripted(
+			call('search', { q: 1 }),
+			call('search', { q: 2 }),
+			call('search', { q: 1 }),
+			say('done'),
+		)
+		const { tools, callTool } = source(
+			vi.fn(async () => ({ text: 'r'.repeat(500), isError: false })),
+		)
+		const run = await runTask({ model, tools, profile, input: 'go', maxInputChars: 800 })
+		expect(callTool).toHaveBeenCalledTimes(3)
+		expect(run.calls.every((record) => record.outcome === 'ok')).toBe(true)
+	})
+})
+
 describe('fitHistory', () => {
 	const history = [
 		{ role: 'user' as const, content: 'x'.repeat(100) },

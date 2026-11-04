@@ -6,10 +6,12 @@ import { createHash } from 'node:crypto'
 import {
 	cpSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
+	realpathSync,
 	rmSync,
 	writeFileSync,
 } from 'node:fs'
@@ -80,8 +82,16 @@ try {
 		(/\.(dylib|so|dll|metal)(\.|$)/.test(entry) &&
 			!/^(lib)?llama-(?!common|server).*impl/.test(entry)) ||
 		/licen[cs]e/i.test(entry)
-	for (const entry of readdirSync(source).filter(needed)) {
-		cpSync(join(source, entry), join(target, entry), { recursive: true, verbatimSymlinks: true })
+	// An installer turns symlinks into copies, which stored every library three times. So one file per
+	// library, under the name the programs load it by: libggml.0.dylib, not libggml.0.28.0.dylib.
+	const entries = readdirSync(source).filter(needed)
+	const isLink = (entry) => lstatSync(join(source, entry)).isSymbolicLink()
+	const loadedBy = /\.\d+\.dylib$|\.so\.\d+$/
+	const reached = new Set(entries.filter(isLink).map((entry) => realpathSync(join(source, entry))))
+	for (const entry of entries) {
+		const path = join(source, entry)
+		if (isLink(entry) ? !loadedBy.test(entry) : reached.has(realpathSync(path))) continue
+		cpSync(realpathSync(path), join(target, entry))
 	}
 	writeFileSync(marker, `${BUILD}-${platform}\n`)
 } finally {

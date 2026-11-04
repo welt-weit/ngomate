@@ -120,6 +120,50 @@ export const AddOnSettings: Story = {
 	},
 }
 
+const hostButtonStyle = {
+	padding: '7px 14px',
+	font: 'inherit',
+	fontWeight: 600,
+	cursor: 'pointer',
+	border: 'none',
+	borderRadius: 999,
+}
+
+/** A made-up host with its own colors, fonts and buttons. */
+export const WhiteLabel: Story = {
+	args: {
+		embedded: true,
+		host: createFakeHost({ conversations: [SAMPLE_CONVERSATION] }),
+		theme: {
+			background: '#fbf8f3',
+			panel: '#f1eadf',
+			line: '#ddd2c0',
+			text: '#2b2118',
+			muted: '#75664f',
+			accent: '#a4432b',
+			accentText: '#ffffff',
+			link: '#a4432b',
+			radius: '14px',
+			font: 'Georgia, serif',
+		},
+		primitives: {
+			Button: ({ variant, active, style, ...props }) => (
+				<button
+					type="button"
+					style={{
+						...hostButtonStyle,
+						textAlign: variant === 'nav' ? 'left' : 'center',
+						color: variant === 'primary' ? '#fff' : '#2b2118',
+						background: variant === 'primary' ? '#a4432b' : active ? '#ddd2c0' : 'transparent',
+						...style,
+					}}
+					{...props}
+				/>
+			),
+		},
+	},
+}
+
 export const MemorySettings: Story = {
 	args: {
 		host: createFakeHost({

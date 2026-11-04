@@ -1,6 +1,7 @@
 import { parseTaskFile } from '@ngomate/core'
 import { createTauriHost } from '@ngomate/tauri'
 import { NgomateApp } from '@ngomate/ui'
+import '@ngomate/ui/default-theme.css'
 import '@ngomate/ui/styles.css'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { StrictMode, useMemo } from 'react'

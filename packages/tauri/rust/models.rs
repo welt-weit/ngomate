@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Download and verification steps the interface shows.
@@ -79,6 +80,37 @@ pub fn entries(dir: &Path) -> Vec<ModelEntry> {
             partial_bytes: std::fs::metadata(partial_path(dir, model)).map(|m| m.len()).unwrap_or(0),
         })
         .collect()
+}
+
+/// Memory free right now, in GB. Some systems report no available memory at all, and then what is not
+/// in use is the best reading there is.
+pub fn free_ram_gb(total: u64, used: u64, available: u64) -> f64 {
+    let free = if available > 0 { available } else { total.saturating_sub(used) };
+    (free as f64 / 1_073_741_824.0 * 10.0).round() / 10.0
+}
+
+/// Left free after a download, so a model never fills the disk the rest of the computer needs.
+const DISK_MARGIN_BYTES: u64 = 1_000_000_000;
+
+/// Zero free means the size could not be read, and the write itself will say if there is no room.
+fn disk_problem(needed: u64, free: u64) -> Option<String> {
+    if free == 0 || free >= needed + DISK_MARGIN_BYTES {
+        return None;
+    }
+    let gb = |bytes: u64| (bytes as f64 / 1_000_000_000.0 * 10.0).ceil() / 10.0;
+    Some(format!(
+        "Not enough disk space: this needs {} GB, plus 1 GB left free, and {} GB is free.",
+        gb(needed),
+        (free as f64 / 1_000_000_000.0 * 10.0).floor() / 10.0
+    ))
+}
+
+fn writing(err: std::io::Error) -> Error {
+    // ENOSPC, and ERROR_DISK_FULL on Windows.
+    if matches!(err.raw_os_error(), Some(28) | Some(112)) {
+        return Error::msg("The disk is full. Free some space and press Resume: what was downloaded is kept.");
+    }
+    err.into()
 }
 
 pub fn free_disk_bytes(dir: &Path) -> u64 {
@@ -163,14 +195,8 @@ async fn run_download(
     let target = installed_path(dir, model);
     let mut offset = tokio::fs::metadata(&partial).await.map(|m| m.len()).unwrap_or(0);
 
-    let needed = model.size_bytes.saturating_sub(offset);
-    let free = free_disk_bytes(dir);
-    if free != 0 && free < needed {
-        return Err(Error::msg(format!(
-            "Not enough disk space: this needs {} GB and {} GB is free.",
-            needed / 1_000_000_000 + 1,
-            free / 1_000_000_000
-        )));
+    if let Some(problem) = disk_problem(model.size_bytes.saturating_sub(offset), free_disk_bytes(dir)) {
+        return Err(Error::msg(problem));
     }
 
     let report = |received: u64, phase: &'static str| {
@@ -182,7 +208,12 @@ async fn run_download(
         })
     };
 
-    let client = reqwest::Client::builder().user_agent("ngomate").build()?;
+    // read_timeout is per read, so a slow connection is fine and only a dead one fails.
+    let client = reqwest::Client::builder()
+        .user_agent("ngomate")
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(60))
+        .build()?;
     let mut request = client.get(url);
     if offset > 0 {
         request = request.header("range", format!("bytes={offset}-"));
@@ -204,11 +235,12 @@ async fn run_download(
         let mut last_report = 0u64;
         while let Some(chunk) = stream.next().await {
             if cancelled.load(Ordering::SeqCst) {
+                // What was asked for, so not an error. The list shows it can be resumed.
                 file.flush().await?;
-                return Err(Error::msg("Download paused."));
+                return Ok(());
             }
             let chunk = chunk?;
-            file.write_all(&chunk).await?;
+            file.write_all(&chunk).await.map_err(writing)?;
             received += chunk.len() as u64;
             if received - last_report >= 4 * 1024 * 1024 {
                 last_report = received;
@@ -237,8 +269,15 @@ pub async fn import(dir: &Path, model: &Model, source: &Path) -> Result<()> {
     if hash_file(source, |_| {}).await? != model.sha256 {
         return Err(Error::msg(format!("That file is not {}: its checksum is different.", model.name)));
     }
+    if let Some(problem) = disk_problem(size, free_disk_bytes(dir)) {
+        return Err(Error::msg(problem));
+    }
     let partial = partial_path(dir, model);
-    tokio::fs::copy(source, &partial).await?;
+    if let Err(err) = tokio::fs::copy(source, &partial).await {
+        // Half a copy is no use to resume, and on a full disk it is what is in the way.
+        let _ = tokio::fs::remove_file(&partial).await;
+        return Err(writing(err));
+    }
     tokio::fs::rename(&partial, installed_path(dir, model)).await?;
     Ok(())
 }
@@ -380,6 +419,29 @@ mod tests {
         assert!(import(&models, &wrong, &source).await.unwrap_err().to_string().contains("checksum"));
         let other_size = Model { file: "other.gguf", ..model(b"short") };
         assert!(import(&models, &other_size, &source).await.unwrap_err().to_string().contains("size"));
+    }
+
+    #[test]
+    fn reads_free_memory_even_where_the_system_reports_none_available() {
+        let gb = 1_073_741_824;
+        assert_eq!(free_ram_gb(16 * gb, 10 * gb, 4 * gb), 4.0);
+        assert_eq!(free_ram_gb(16 * gb, 10 * gb, 0), 6.0);
+    }
+
+    #[test]
+    fn keeps_a_margin_of_free_disk() {
+        let gb = 1_000_000_000;
+        assert!(disk_problem(5 * gb, 7 * gb).is_none());
+        assert!(disk_problem(5 * gb, 6 * gb).is_none());
+        assert!(disk_problem(5 * gb, 6 * gb - 1).unwrap().contains("plus 1 GB"));
+        assert!(disk_problem(5 * gb, 0).is_none());
+    }
+
+    #[test]
+    fn says_what_to_do_when_the_disk_fills_up() {
+        let full = writing(std::io::Error::from_raw_os_error(28)).to_string();
+        assert!(full.contains("disk is full") && full.contains("Resume"));
+        assert!(!writing(std::io::Error::from_raw_os_error(13)).to_string().contains("disk is full"));
     }
 
     #[test]

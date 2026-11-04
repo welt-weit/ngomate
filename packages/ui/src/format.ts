@@ -4,15 +4,17 @@ export function formatBytes(bytes: number): string {
 	return `${Math.round(bytes / 1024)} KB`
 }
 
-/** Which models this computer can run, smallest first, so the first one offered is a safe choice. */
+/** The most capable model this computer has the memory and the disk for. Catalog order breaks a tie. */
 export function recommendedModelId(
-	models: { id: string; minRamGb: number; sizeBytes: number }[],
+	models: { id: string; minRamGb: number; sizeBytes: number; installed?: boolean }[],
 	ramGb: number,
+	freeDiskBytes = Number.POSITIVE_INFINITY,
 ): string | null {
-	const fitting = models
-		.filter((model) => model.minRamGb <= ramGb)
-		.sort((a, b) => a.sizeBytes - b.sizeBytes)
-	return fitting[0]?.id ?? null
+	const fits = models.filter(
+		(model) => model.minRamGb <= ramGb && (model.installed || model.sizeBytes < freeDiskBytes),
+	)
+	const best = Math.max(...fits.map((model) => model.minRamGb))
+	return fits.find((model) => model.minRamGb === best)?.id ?? null
 }
 
 export function makeId(prefix: string): string {

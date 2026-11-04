@@ -3,6 +3,7 @@ const COMMANDS: &[&str] = &[
     "store_read",
     "store_write",
     "store_remove",
+    "conversation_list",
     "secret_get",
     "secret_set",
     "secret_delete",

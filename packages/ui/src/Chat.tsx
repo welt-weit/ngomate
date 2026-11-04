@@ -1,11 +1,21 @@
 import type { ChatMessage, PromptDefinition, TaskFile } from '@ngomate/core'
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react'
+import {
+	type FormEvent,
+	type KeyboardEvent,
+	memo,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AnswerNotice, NgomateHost, PickedDocument } from './host.js'
+import { usePrimitives } from './primitives.js'
 import { type ChatDeps, type PendingWrite, documentBlock, useChat } from './useChat.js'
 
 function WriteConfirmation({ request }: { request: PendingWrite }) {
+	const { Button } = usePrimitives()
 	const isMemory = request.tool === 'save_memory'
 	return (
 		<div className="ngm-confirm" role="alertdialog" aria-label="Confirm this action">
@@ -19,12 +29,10 @@ function WriteConfirmation({ request }: { request: PendingWrite }) {
 				<pre className="ngm-pre">{JSON.stringify(request.args, null, 2)}</pre>
 			)}
 			<div className="ngm-row">
-				<button type="button" className="ngm-primary" onClick={() => request.resolve(true)}>
+				<Button variant="primary" onClick={() => request.resolve(true)}>
 					Allow
-				</button>
-				<button type="button" onClick={() => request.resolve(false)}>
-					Don't allow
-				</button>
+				</Button>
+				<Button onClick={() => request.resolve(false)}>Don't allow</Button>
 			</div>
 		</div>
 	)
@@ -34,6 +42,20 @@ function Notice({ notice }: { notice: AnswerNotice }) {
 	return (
 		<div className="ngm-notice">
 			{notice.stopped && <p>{notice.stopped}</p>}
+			{notice.cutOff && (
+				<p>This answer reached the length limit and was cut off. Ask it to continue.</p>
+			)}
+			{(notice.toolsDidNotFit?.length ?? 0) > 0 && (
+				<p>
+					There was no room to offer these tools with this message:{' '}
+					{notice.toolsDidNotFit?.join(', ')}. Turning off others under Add-ons makes room.
+				</p>
+			)}
+			{notice.earlierLeftOut && (
+				<p>
+					This conversation is too long for the model to hold, so it did not see the earliest part.
+				</p>
+			)}
 			{notice.checkFigures && (
 				<p>Check every name and figure against your material. The model can mix them up.</p>
 			)}
@@ -58,28 +80,25 @@ function CopyAndSave({
 	text,
 	onProblem,
 }: { host: NgomateHost; text: string; onProblem: (err: unknown) => void }) {
+	const { Button } = usePrimitives()
 	const [copied, setCopied] = useState(false)
 	return (
 		<div className="ngm-row ngm-answer-actions">
-			<button
-				type="button"
-				className="ngm-quiet"
+			<Button
+				variant="quiet"
 				onClick={() => navigator.clipboard.writeText(text).then(() => setCopied(true), onProblem)}
 			>
 				{copied ? 'Copied' : 'Copy'}
-			</button>
-			<button
-				type="button"
-				className="ngm-quiet"
-				onClick={() => host.saveDocument('draft.md', text).catch(onProblem)}
-			>
+			</Button>
+			<Button variant="quiet" onClick={() => host.saveDocument('draft.md', text).catch(onProblem)}>
 				Save as file
-			</button>
+			</Button>
 		</div>
 	)
 }
 
-function MessageView({
+// Finished messages do not change, so an answer being written must not parse them all again.
+const MessageView = memo(function MessageView({
 	message,
 	notice,
 	host,
@@ -118,7 +137,7 @@ function MessageView({
 			<CopyAndSave host={host} text={message.content} onProblem={onProblem} />
 		</div>
 	)
-}
+})
 
 export type ChatStart = { task?: TaskFile; prompt?: { definition: PromptDefinition; text: string } }
 
@@ -128,6 +147,7 @@ export function Chat({
 	start,
 	onStarted,
 }: { deps: ChatDeps; conversationId: string; start: ChatStart | null; onStarted: () => void }) {
+	const { Button, TextArea, Chip } = usePrimitives()
 	const chat = useChat(deps, conversationId)
 	const [text, setText] = useState('')
 	const [documents, setDocuments] = useState<PickedDocument[]>([])
@@ -135,8 +155,10 @@ export function Chat({
 	const [prompt, setPrompt] = useState<ChatStart['prompt']>()
 	const [fileProblem, setFileProblem] = useState<string | null>(null)
 	const bottom = useRef<HTMLDivElement>(null)
-	const onProblem = (err: unknown) =>
-		setFileProblem(err instanceof Error ? err.message : String(err))
+	const onProblem = useCallback(
+		(err: unknown) => setFileProblem(err instanceof Error ? err.message : String(err)),
+		[],
+	)
 
 	useEffect(() => {
 		if (!start) return
@@ -217,7 +239,11 @@ export function Chat({
 				)}
 				{chat.busy && !chat.streaming && !chat.pendingWrite && (
 					<output className="ngm-tool-line ngm-working">
-						{chat.activity ? `Using ${chat.activity}…` : 'Thinking…'}
+						{chat.startingModel
+							? 'Starting the model. This can take a minute…'
+							: chat.activity
+								? `Using ${chat.activity}…`
+								: 'Thinking…'}
 					</output>
 				)}
 				{chat.pendingWrite && <WriteConfirmation request={chat.pendingWrite} />}
@@ -242,38 +268,37 @@ export function Chat({
 			<form className="ngm-composer" onSubmit={submit}>
 				{task && (
 					<div className="ngm-chip-line">
-						<span className="ngm-chip">{task.title}</span>
-						<button type="button" className="ngm-quiet" onClick={() => setTask(undefined)}>
+						<Chip>{task.title}</Chip>
+						<Button variant="quiet" onClick={() => setTask(undefined)}>
 							Remove
-						</button>
+						</Button>
 						<span className="ngm-muted">{task.ask}</span>
 					</div>
 				)}
 				{prompt && (
 					<div className="ngm-chip-line">
-						<span className="ngm-chip">{prompt.definition.name}</span>
-						<button type="button" className="ngm-quiet" onClick={() => setPrompt(undefined)}>
+						<Chip>{prompt.definition.name}</Chip>
+						<Button variant="quiet" onClick={() => setPrompt(undefined)}>
 							Remove
-						</button>
+						</Button>
 					</div>
 				)}
 				{documents.map((document, index) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: two files can share a name
 					<div className="ngm-chip-line" key={index}>
-						<span className="ngm-chip">{document.name}</span>
-						<button
-							type="button"
-							className="ngm-quiet"
+						<Chip>{document.name}</Chip>
+						<Button
+							variant="quiet"
 							onClick={() => setDocuments((known) => known.filter((_, at) => at !== index))}
 						>
 							Remove
-						</button>
-						{documentBlock(document).cut && (
+						</Button>
+						{documentBlock(document, Math.floor(chat.documentLimit / documents.length)).cut && (
 							<span className="ngm-muted">Too long: only the first part will be read.</span>
 						)}
 					</div>
 				))}
-				<textarea
+				<TextArea
 					aria-label="Message"
 					value={text}
 					rows={3}
@@ -282,18 +307,16 @@ export function Chat({
 					onKeyDown={onKey}
 				/>
 				<div className="ngm-row ngm-composer-actions">
-					<button type="button" onClick={attach} disabled={chat.busy}>
+					<Button onClick={attach} disabled={chat.busy}>
 						Attach document
-					</button>
+					</Button>
 					<span className="ngm-grow" />
 					{chat.busy ? (
-						<button type="button" onClick={chat.stop}>
-							Stop
-						</button>
+						<Button onClick={chat.stop}>Stop</Button>
 					) : (
-						<button type="submit" className="ngm-primary">
+						<Button type="submit" variant="primary">
 							Send
-						</button>
+						</Button>
 					)}
 				</div>
 			</form>

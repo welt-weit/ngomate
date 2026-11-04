@@ -113,6 +113,7 @@ export function fakeModels(installed: string[] = ['qwen3-8b-q4']): ModelHost {
 				entry('granite-4.2-8b-q4', 'Granite 4.2 8B', 'IBM', 5_347_917_952),
 			],
 			ramGb: 16,
+			freeRamGb: 3.2,
 			freeDiskBytes: 80_000_000_000,
 			runningId: null,
 		}),
@@ -132,7 +133,7 @@ export function fakeModels(installed: string[] = ['qwen3-8b-q4']): ModelHost {
 		cancelDownload: async () => {},
 		remove: async () => {},
 		importFile: async () => false,
-		start: async () => ({ baseUrl: 'http://fake', apiKey: 'fake' }),
+		start: async () => ({ baseUrl: 'http://fake', apiKey: 'fake', contextTokens: 16384 }),
 		stop: async () => {},
 	}
 }

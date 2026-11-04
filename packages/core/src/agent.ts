@@ -2,6 +2,7 @@ import { extractDates, findUnsourcedDates } from './dates.js'
 import { extractLinks, findUnsourcedLinks } from './links.js'
 import type { ToolResult, ToolSource } from './mcp.js'
 import type { ChatMessage, ModelClient, ToolCall, ToolDefinition } from './model.js'
+import { chooseTools, compactTool } from './toolChoice.js'
 
 /**
  * One job the agent can do. Small models fail when handed a long tool list, and a write tool must
@@ -18,6 +19,13 @@ export type TaskProfile = {
 	 * a read: anything else needs confirmation.
 	 */
 	allTools?: boolean
+	/** What the task is about, in words, for choosing among the tools of `allTools`. */
+	toolHint?: string
+	/**
+	 * Send the instructions with the request, not as system text. Told only in the system text, a small
+	 * model answered "Hello!" and did not do the task. The person's own words are what is kept.
+	 */
+	instructionsInRequest?: boolean
 	/**
 	 * Read calls the agent makes itself before the model's first turn. A step that never varies is
 	 * more reliable in code: small models send placeholders or stray text as its arguments.
@@ -73,6 +81,13 @@ export type TaskRun = {
 	/** In the answer, but in nothing the person or a tool supplied. Shown to the person to check. */
 	unsourcedDates: string[]
 	unsourcedLinks: string[]
+	/** The answer stopped at the length limit, not because it was finished. */
+	cutOff: boolean
+	/** Tools relevant to this request that there was no room to offer. */
+	toolsDidNotFit: string[]
+	/** Tokens the model processed in this run. Null when the server does not say. */
+	promptTokens: number | null
+	completionTokens: number | null
 	/** The conversation so far, to pass back as `history` on the next message. */
 	messages: ChatMessage[]
 }
@@ -90,6 +105,12 @@ export type RunTaskOptions = {
 	maxFailuresInARow?: number
 	/** Longer tool results are cut, and the model is told so: one large page can sink a small model. */
 	maxToolResultChars?: number
+	/** How much text the model can be sent. Past this, the oldest tool results give way. */
+	maxInputChars?: number
+	/** Room for tool descriptions. Without it, every tool of `allTools` goes with every message. */
+	maxToolChars?: number
+	/** Longest answer allowed per turn. */
+	maxOutputTokens?: number
 	/** Text from the host: team rules, the org's name. */
 	context?: string
 	/** Earlier messages of the conversation, from the last run's `messages`. */
@@ -158,6 +179,30 @@ export function fitHistory(history: ChatMessage[], maxChars: number): ChatMessag
 	return history.slice(start)
 }
 
+const REMOVED_RESULT = '[Removed to make room. Call the tool again if you still need this.]'
+
+/** Empties the oldest tool results until the messages fit. Returns whether any had to go. */
+function makeRoom(messages: ChatMessage[], maxChars: number): boolean {
+	let total = messages.reduce((sum, message) => sum + (message.content?.length ?? 0), 0)
+	let removed = false
+	// The newest results stay: the model has not read them yet, and without them it would only ask again.
+	let newest = messages.length - 1
+	while (
+		newest > 0 &&
+		!(messages[newest]?.role === 'assistant' && 'toolCalls' in (messages[newest] as object))
+	) {
+		newest--
+	}
+	for (const message of messages.slice(0, Math.max(0, newest))) {
+		if (total <= maxChars) break
+		if (message.role !== 'tool' || message.content === REMOVED_RESULT) continue
+		total -= message.content.length - REMOVED_RESULT.length
+		message.content = REMOVED_RESULT
+		removed = true
+	}
+	return removed
+}
+
 const WRAP_UP =
 	'Stop using tools now. Say plainly what you found, what you could not do and why. Do not guess at anything you did not read.'
 
@@ -171,7 +216,21 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 	const startedAt = performance.now()
 
 	const offered = await tools.listTools()
-	const allowed: ToolDefinition[] = offered.filter((tool) => kindOf(profile, tool.name, offered))
+	const permitted = offered.filter((tool) => kindOf(profile, tool.name, offered))
+	const usedBefore = history.flatMap((message) =>
+		message.role === 'assistant' ? (message.toolCalls ?? []).map((call) => call.name) : [],
+	)
+	const choice =
+		profile.allTools && options.maxToolChars !== undefined
+			? chooseTools(
+					permitted,
+					`${profile.toolHint ?? ''} ${input.slice(0, 1000)}`,
+					options.maxToolChars,
+					usedBefore,
+				)
+			: { tools: permitted.map(compactTool), didNotFit: [] }
+	// One set for the whole run: a changed set makes the model read the whole prompt again.
+	const allowed: ToolDefinition[] = choice.tools
 	const missingTools = [...profile.readTools, ...profile.writeTools].filter(
 		(name) => !offered.some((tool) => tool.name === name),
 	)
@@ -196,13 +255,25 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 	const messages: ChatMessage[] = [
 		{
 			role: 'system',
-			content: [SYSTEM_RULES, profile.instructions, options.context, ...preloaded]
+			content: [
+				SYSTEM_RULES,
+				profile.instructionsInRequest ? null : profile.instructions,
+				options.context,
+				...preloaded,
+			]
 				.filter(Boolean)
 				.join('\n\n'),
 		},
 		...history,
-		{ role: 'user', content: input },
+		{
+			role: 'user',
+			content: profile.instructionsInRequest ? `${profile.instructions}\n\n${input}` : input,
+		},
 	]
+	let promptTokens = 0
+	let completionTokens = 0
+	let sawUsage = false
+	let cutOff = false
 	const finish = (
 		status: TaskRun['status'],
 		turns: number,
@@ -222,8 +293,22 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 				? [...extractDates(answer)].filter((date) => !extractDates(known).has(date))
 				: [],
 			unsourcedLinks: answer ? findUnsourcedLinks(extractLinks(answer), [known]) : [],
-			messages: messages.slice(1),
+			messages: messages
+				.slice(1)
+				.map((message, index) =>
+					index === history.length ? { role: 'user' as const, content: input } : message,
+				),
+			cutOff,
+			toolsDidNotFit: choice.didNotFit,
+			promptTokens: sawUsage ? promptTokens : null,
+			completionTokens: sawUsage ? completionTokens : null,
 		}
+	}
+	const count = (reply: Awaited<ReturnType<ModelClient['chat']>>) => {
+		if (reply.promptTokens !== null || reply.completionTokens !== null) sawUsage = true
+		promptTokens += reply.promptTokens ?? 0
+		completionTokens += reply.completionTokens ?? 0
+		cutOff = reply.cutOff === true
 	}
 	const isCancelled = () => options.signal?.aborted === true
 	// One last turn with no tools, so a stopped run still tells the person where it got to.
@@ -235,7 +320,9 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 				tools: [],
 				onText: options.onText,
 				signal: options.signal,
+				maxOutputTokens: options.maxOutputTokens,
 			})
+			count(reply)
 			messages.pop()
 			if (reply.content) messages.push({ role: 'assistant', content: reply.content })
 			return finish(status, turns, reply.content)
@@ -250,6 +337,8 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 
 	for (let turn = 1; turn <= maxTurns; turn++) {
 		if (isCancelled()) return finish('cancelled', turn - 1, null)
+		// A removed result may be asked for again, so that call no longer counts as a repeat.
+		if (options.maxInputChars && makeRoom(messages, options.maxInputChars)) seenCalls.clear()
 		const turnStart = performance.now()
 		let reply: Awaited<ReturnType<ModelClient['chat']>>
 		try {
@@ -258,7 +347,9 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 				tools: allowed,
 				onText: options.onText,
 				signal: options.signal,
+				maxOutputTokens: options.maxOutputTokens,
 			})
+			count(reply)
 		} catch (err) {
 			if (isCancelled()) return finish('cancelled', turn, null)
 			return finish('model_error', turn, null, err instanceof Error ? err.message : String(err))

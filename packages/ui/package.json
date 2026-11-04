@@ -8,7 +8,8 @@
 			"types": "./src/index.ts",
 			"default": "./dist/index.js"
 		},
-		"./styles.css": "./src/styles.css"
+		"./styles.css": "./src/styles.css",
+		"./default-theme.css": "./src/default-theme.css"
 	},
 	"files": ["dist", "src"],
 	"scripts": {

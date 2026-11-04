@@ -3,10 +3,12 @@ import { isDestructiveTool } from '@ngomate/core'
 import { useCallback, useEffect, useState } from 'react'
 import { formatBytes, makeId, recommendedModelId } from './format.js'
 import type { Addon, DownloadProgress, ModelInfo, NgomateHost, Settings } from './host.js'
+import { usePrimitives } from './primitives.js'
 
 type PanelProps = { host: NgomateHost; settings: Settings; onChange: (settings: Settings) => void }
 
 export function ModelPanel({ host, settings, onChange }: PanelProps) {
+	const { Button, Chip } = usePrimitives()
 	const [info, setInfo] = useState<ModelInfo | null>(null)
 	const [progress, setProgress] = useState<DownloadProgress | null>(null)
 	const [problem, setProblem] = useState<string | null>(null)
@@ -31,7 +33,7 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 	}
 
 	const server = settings.model?.kind === 'server' ? settings.model : null
-	const recommended = info ? recommendedModelId(info.models, info.ramGb) : null
+	const recommended = info ? recommendedModelId(info.models, info.ramGb, info.freeDiskBytes) : null
 
 	return (
 		<section className="ngm-panel">
@@ -42,6 +44,12 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 						This computer has {info.ramGb} GB of memory and {formatBytes(info.freeDiskBytes)} of
 						free disk. Models run here and nothing you type leaves this computer.
 					</p>
+					{info.freeRamGb > 0 && info.freeRamGb < 4 && !info.runningId && (
+						<p className="ngm-notice">
+							Only {info.freeRamGb} GB of memory is free right now. Close other programs if the
+							model is slow to start.
+						</p>
+					)}
 					{info.models.map((model) => {
 						const downloading = progress?.id === model.id
 						const selected = settings.model?.kind === 'local' && settings.model.id === model.id
@@ -50,10 +58,8 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 							<div className="ngm-card" key={model.id}>
 								<div className="ngm-row">
 									<strong>{model.name}</strong>
-									{model.id === recommended && (
-										<span className="ngm-chip">Recommended for this computer</span>
-									)}
-									{selected && <span className="ngm-chip">In use</span>}
+									{model.id === recommended && <Chip>Recommended for this computer</Chip>}
+									{selected && <Chip>In use</Chip>}
 								</div>
 								<p className="ngm-muted">
 									{model.vendor} · {model.license} · {formatBytes(model.sizeBytes)} · needs{' '}
@@ -77,18 +83,16 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 								<div className="ngm-row">
 									{model.installed ? (
 										<>
-											<button
-												type="button"
-												className="ngm-primary"
+											<Button
+												variant="primary"
 												disabled={selected}
 												onClick={() =>
 													onChange({ ...settings, model: { kind: 'local', id: model.id } })
 												}
 											>
 												Use this model
-											</button>
-											<button
-												type="button"
+											</Button>
+											<Button
 												onClick={() =>
 													guarded(async () => {
 														await models.remove(model.id)
@@ -97,17 +101,14 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 												}
 											>
 												Remove
-											</button>
+											</Button>
 										</>
 									) : downloading ? (
-										<button type="button" onClick={() => models.cancelDownload(model.id)}>
-											Pause
-										</button>
+										<Button onClick={() => models.cancelDownload(model.id)}>Pause</Button>
 									) : (
 										<>
-											<button
-												type="button"
-												className="ngm-primary"
+											<Button
+												variant="primary"
 												disabled={Boolean(progress)}
 												onClick={() =>
 													guarded(async () => {
@@ -122,13 +123,15 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 												{model.partialBytes > 0
 													? `Resume (${formatBytes(model.partialBytes)} done)`
 													: 'Download'}
-											</button>
-											<button
-												type="button"
-												onClick={() => guarded(() => models.importFile(model.id))}
-											>
+											</Button>
+											<Button onClick={() => guarded(() => models.importFile(model.id))}>
 												From a file
-											</button>
+											</Button>
+											{model.partialBytes > 0 && (
+												<Button onClick={() => guarded(() => models.remove(model.id))}>
+													Discard download
+												</Button>
+											)}
 										</>
 									)}
 								</div>
@@ -159,6 +162,7 @@ function ServerForm({
 	onChange,
 	initial,
 }: PanelProps & { initial: { baseUrl: string; model: string } | null }) {
+	const { Button, Input, Chip } = usePrimitives()
 	const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? 'http://127.0.0.1:11434/v1')
 	const [model, setModel] = useState(initial?.model ?? '')
 	const [key, setKey] = useState('')
@@ -177,15 +181,15 @@ function ServerForm({
 		>
 			<label>
 				Address
-				<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required />
+				<Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required />
 			</label>
 			<label>
 				Model name
-				<input value={model} onChange={(event) => setModel(event.target.value)} required />
+				<Input value={model} onChange={(event) => setModel(event.target.value)} required />
 			</label>
 			<label>
 				Key, if it needs one
-				<input
+				<Input
 					type="password"
 					value={key}
 					onChange={(event) => setKey(event.target.value)}
@@ -193,8 +197,8 @@ function ServerForm({
 				/>
 			</label>
 			<div className="ngm-row">
-				<button type="submit">{initial ? 'Update' : 'Use this server'}</button>
-				{initial && <span className="ngm-chip">In use</span>}
+				<Button type="submit">{initial ? 'Update' : 'Use this server'}</Button>
+				{initial && <Chip>In use</Chip>}
 			</div>
 		</form>
 	)
@@ -217,6 +221,7 @@ const PRESETS: { name: string; url: string; note: string; keyHelp: string }[] = 
 ]
 
 function AddonRow({ addon, host, settings, onChange }: PanelProps & { addon: Addon }) {
+	const { Button, Checkbox } = usePrimitives()
 	const [state, setState] = useState<{
 		checking: boolean
 		tools?: ToolDefinition[]
@@ -234,9 +239,11 @@ function AddonRow({ addon, host, settings, onChange }: PanelProps & { addon: Add
 		setState({ checking: true })
 		try {
 			const source = await host.connectAddon(addon)
-			const tools = await source.listTools()
-			await source.close()
-			setState({ checking: false, tools })
+			try {
+				setState({ checking: false, tools: await source.listTools() })
+			} finally {
+				await source.close()
+			}
 		} catch (err) {
 			setState({ checking: false, problem: err instanceof Error ? err.message : String(err) })
 		}
@@ -249,8 +256,7 @@ function AddonRow({ addon, host, settings, onChange }: PanelProps & { addon: Add
 				<strong>{addon.name}</strong>
 				<span className="ngm-grow" />
 				<label className="ngm-inline">
-					<input
-						type="checkbox"
+					<Checkbox
 						checked={addon.enabled}
 						onChange={(event) => update({ enabled: event.target.checked })}
 					/>{' '}
@@ -264,8 +270,7 @@ function AddonRow({ addon, host, settings, onChange }: PanelProps & { addon: Add
 			</p>
 			{addon.note && <p className="ngm-muted">{addon.note}</p>}
 			<label className="ngm-inline">
-				<input
-					type="checkbox"
+				<Checkbox
 					checked={addon.allowDestructive}
 					onChange={(event) => update({ allowDestructive: event.target.checked })}
 				/>{' '}
@@ -280,17 +285,42 @@ function AddonRow({ addon, host, settings, onChange }: PanelProps & { addon: Add
 					.
 				</p>
 			)}
+			{state.tools && (
+				<details>
+					<summary className="ngm-muted">Choose which tools it can use</summary>
+					{state.tools
+						.filter((tool) => addon.allowDestructive || !isDestructiveTool(tool))
+						.map((tool) => (
+							<label
+								className="ngm-inline ngm-tool-switch"
+								key={tool.name}
+								title={tool.description}
+							>
+								<Checkbox
+									checked={!addon.disabledTools?.includes(tool.name)}
+									onChange={(event) =>
+										update({
+											disabledTools: event.target.checked
+												? addon.disabledTools?.filter((name) => name !== tool.name)
+												: [...(addon.disabledTools ?? []), tool.name],
+										})
+									}
+								/>{' '}
+								{tool.name}
+							</label>
+						))}
+				</details>
+			)}
 			{state.problem && (
 				<p className="ngm-error" role="alert">
 					{state.problem}
 				</p>
 			)}
 			<div className="ngm-row">
-				<button type="button" onClick={check} disabled={state.checking}>
+				<Button onClick={check} disabled={state.checking}>
 					{state.checking ? 'Checking…' : 'Check connection'}
-				</button>
-				<button
-					type="button"
+				</Button>
+				<Button
 					onClick={async () => {
 						await host.deleteSecret(`addon:${addon.id}`)
 						onChange({
@@ -300,13 +330,14 @@ function AddonRow({ addon, host, settings, onChange }: PanelProps & { addon: Add
 					}}
 				>
 					Remove
-				</button>
+				</Button>
 			</div>
 		</div>
 	)
 }
 
 export function AddonsPanel({ host, settings, onChange }: PanelProps) {
+	const { Button, Input, Select } = usePrimitives()
 	const [kind, setKind] = useState<'http' | 'command'>('http')
 	const [name, setName] = useState('')
 	const [url, setUrl] = useState('')
@@ -358,8 +389,7 @@ export function AddonsPanel({ host, settings, onChange }: PanelProps) {
 				{PRESETS.filter(
 					(preset) => !settings.addons.some((addon) => addon.name === preset.name),
 				).map((preset) => (
-					<button
-						type="button"
+					<Button
 						key={preset.name}
 						onClick={() => {
 							setKind('http')
@@ -370,7 +400,7 @@ export function AddonsPanel({ host, settings, onChange }: PanelProps) {
 						}}
 					>
 						{preset.name}
-					</button>
+					</Button>
 				))}
 			</div>
 			<form
@@ -382,23 +412,23 @@ export function AddonsPanel({ host, settings, onChange }: PanelProps) {
 			>
 				<label>
 					Name
-					<input value={name} onChange={(event) => setName(event.target.value)} required />
+					<Input value={name} onChange={(event) => setName(event.target.value)} required />
 				</label>
 				<label>
 					Type
-					<select
+					<Select
 						value={kind}
 						onChange={(event) => setKind(event.target.value as 'http' | 'command')}
 					>
 						<option value="http">A service on the web</option>
 						<option value="command">A program on this computer</option>
-					</select>
+					</Select>
 				</label>
 				{kind === 'http' ? (
 					<>
 						<label>
 							Address
-							<input
+							<Input
 								type="url"
 								value={url}
 								onChange={(event) => setUrl(event.target.value)}
@@ -407,7 +437,7 @@ export function AddonsPanel({ host, settings, onChange }: PanelProps) {
 						</label>
 						<label>
 							Token, if it needs one
-							<input
+							<Input
 								type="password"
 								value={token}
 								onChange={(event) => setToken(event.target.value)}
@@ -420,7 +450,7 @@ export function AddonsPanel({ host, settings, onChange }: PanelProps) {
 					<>
 						<label>
 							Command
-							<input
+							<Input
 								value={command}
 								onChange={(event) => setCommand(event.target.value)}
 								required
@@ -432,13 +462,14 @@ export function AddonsPanel({ host, settings, onChange }: PanelProps) {
 						</p>
 					</>
 				)}
-				<button type="submit">Add</button>
+				<Button type="submit">Add</Button>
 			</form>
 		</section>
 	)
 }
 
 export function MemoryPanel({ host }: { host: NgomateHost }) {
+	const { Button, TextArea } = usePrimitives()
 	const [notes, setNotes] = useState<MemoryNote[]>([])
 	const [open, setOpen] = useState<{ name: string; text: string } | null>(null)
 
@@ -457,18 +488,16 @@ export function MemoryPanel({ host }: { host: NgomateHost }) {
 			{notes.length === 0 && <p className="ngm-muted">No notes yet.</p>}
 			{notes.map((note) => (
 				<div className="ngm-row" key={note.name}>
-					<button
-						type="button"
-						className="ngm-quiet"
+					<Button
+						variant="quiet"
 						onClick={async () =>
 							setOpen({ name: note.name, text: (await host.memory.read(note.name)) ?? '' })
 						}
 					>
 						{note.name}
-					</button>
+					</Button>
 					<span className="ngm-grow" />
-					<button
-						type="button"
+					<Button
 						onClick={async () => {
 							await host.memory.remove(note.name)
 							if (open?.name === note.name) setOpen(null)
@@ -476,7 +505,7 @@ export function MemoryPanel({ host }: { host: NgomateHost }) {
 						}}
 					>
 						Delete
-					</button>
+					</Button>
 				</div>
 			))}
 			{open && (
@@ -490,17 +519,15 @@ export function MemoryPanel({ host }: { host: NgomateHost }) {
 				>
 					<label>
 						{open.name}
-						<textarea
+						<TextArea
 							rows={12}
 							value={open.text}
 							onChange={(event) => setOpen({ ...open, text: event.target.value })}
 						/>
 					</label>
 					<div className="ngm-row">
-						<button type="submit">Save</button>
-						<button type="button" onClick={() => setOpen(null)}>
-							Close
-						</button>
+						<Button type="submit">Save</Button>
+						<Button onClick={() => setOpen(null)}>Close</Button>
 					</div>
 				</form>
 			)}

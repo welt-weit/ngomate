@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -89,6 +89,29 @@ pub fn list(root: &Path, area: Area) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationSummary {
+    pub id: String,
+    pub title: String,
+    pub updated_at: String,
+}
+
+/// Only the fields a list shows. A conversation's messages are skipped while reading, never held in
+/// memory or sent to the page, because this runs after every message and one can hold whole documents.
+pub fn conversation_summaries(root: &Path) -> Result<Vec<ConversationSummary>> {
+    let mut summaries = vec![];
+    for entry in list(root, Area::Conversations)? {
+        let path = file_path(root, Area::Conversations, &entry.name)?;
+        let Ok(file) = std::fs::File::open(path) else { continue };
+        // One damaged file should not cost the person the whole list.
+        if let Ok(summary) = serde_json::from_reader(std::io::BufReader::new(file)) {
+            summaries.push(summary);
+        }
+    }
+    Ok(summaries)
+}
+
 pub fn read(root: &Path, area: Area, name: &str) -> Result<Option<String>> {
     let path = file_path(root, area, name)?;
     match std::fs::read_to_string(path) {
@@ -153,6 +176,21 @@ mod tests {
             write(dir.path(), Area::Memory, name, "x").unwrap();
             assert_eq!(read(dir.path(), Area::Memory, name).unwrap().unwrap(), "x");
         }
+    }
+
+    #[test]
+    fn summarizes_conversations_and_skips_a_damaged_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let long = "x".repeat(100_000);
+        let conversation = format!(
+            r#"{{"id":"a","title":"Water","updatedAt":"2027-01-01","messages":[{{"role":"user","content":"{long}"}}],"notices":{{}}}}"#
+        );
+        write(dir.path(), Area::Conversations, "a", &conversation).unwrap();
+        write(dir.path(), Area::Conversations, "broken", "{not json").unwrap();
+        let summaries = conversation_summaries(dir.path()).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!((summaries[0].id.as_str(), summaries[0].title.as_str()), ("a", "Water"));
+        assert_eq!(summaries[0].updated_at, "2027-01-01");
     }
 
     #[test]

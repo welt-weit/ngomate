@@ -1,0 +1,32 @@
+/* The look of the standalone app. On :root, so a value set on any nearer parent still wins. */
+:where(:root) {
+	--ngm-bg: #ffffff;
+	--ngm-panel: #f6f7f8;
+	--ngm-line: #dfe2e6;
+	--ngm-text: #1b1f24;
+	--ngm-muted: #5c6670;
+	--ngm-accent: #1f6f5c;
+	--ngm-accent-text: #ffffff;
+	--ngm-link: #17594a;
+	--ngm-warn-bg: #fff6e0;
+	--ngm-warn-text: #6a4b00;
+	--ngm-error: #b3261e;
+	--ngm-radius: 8px;
+	--ngm-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+	:where(:root) {
+		--ngm-bg: #16191d;
+		--ngm-panel: #1f2328;
+		--ngm-line: #343a41;
+		--ngm-text: #e7eaee;
+		--ngm-muted: #a2acb6;
+		--ngm-accent: #4fb89f;
+		--ngm-accent-text: #0d1512;
+		--ngm-link: #7fd8c3;
+		--ngm-warn-bg: #3a2f12;
+		--ngm-warn-text: #f3dc9a;
+		--ngm-error: #ff8a80;
+	}
+}

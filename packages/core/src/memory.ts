@@ -50,7 +50,7 @@ export function createMemoryToolSource(store: MemoryStore): ToolSource {
 			{
 				name: SAVE_TOOL,
 				description:
-					'Save a note for later conversations. Replaces any note with the same name, so read it first and include what should stay.',
+					'Remember something: save a note for later conversations. Replaces any note with the same name, so read it first and include what should stay.',
 				inputSchema: {
 					type: 'object',
 					properties: { name: { type: 'string' }, text: { type: 'string' } },

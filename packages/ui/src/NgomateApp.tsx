@@ -1,9 +1,18 @@
-import type { ModelClient, PromptDefinition, TaskFile } from '@ngomate/core'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { PromptDefinition, TaskFile } from '@ngomate/core'
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react'
 import { Chat, type ChatStart } from './Chat.js'
 import { makeId } from './format.js'
 import { DEFAULT_SETTINGS, type NgomateHost, type Settings } from './host.js'
 import { AddonsPanel, MemoryPanel, ModelPanel } from './panels.js'
+import {
+	DEFAULT_PRIMITIVES,
+	type NgomatePrimitives,
+	type NgomateTheme,
+	PrimitivesProvider,
+	themeVariables,
+	usePrimitives,
+} from './primitives.js'
+import { useIdleUnload } from './useIdleUnload.js'
 
 type View = 'chat' | 'model' | 'addons' | 'memory'
 
@@ -14,6 +23,7 @@ function PromptForm({
 	onCancel,
 	onReady,
 }: { prompt: ConnectorPrompt; onCancel: () => void; onReady: (text: string) => void }) {
+	const { Button, Input } = usePrimitives()
 	const [values, setValues] = useState<Record<string, string>>({})
 	const [problem, setProblem] = useState<string | null>(null)
 	return (
@@ -32,7 +42,7 @@ function PromptForm({
 			{prompt.arguments.map((argument) => (
 				<label key={argument.name}>
 					{argument.description || argument.name}
-					<input
+					<Input
 						required={argument.required}
 						value={values[argument.name] ?? ''}
 						onChange={(event) => setValues({ ...values, [argument.name]: event.target.value })}
@@ -45,18 +55,38 @@ function PromptForm({
 				</p>
 			)}
 			<div className="ngm-row">
-				<button type="submit" className="ngm-primary">
+				<Button type="submit" variant="primary">
 					Use
-				</button>
-				<button type="button" onClick={onCancel}>
-					Cancel
-				</button>
+				</Button>
+				<Button onClick={onCancel}>Cancel</Button>
 			</div>
 		</form>
 	)
 }
 
-export function NgomateApp({ host }: { host: NgomateHost }) {
+export type NgomateAppProps = {
+	host: NgomateHost
+	/** Inside another app, which already shows its own name. */
+	embedded?: boolean
+	/** Colors and fonts. Anything left out comes from a parent element. */
+	theme?: NgomateTheme
+	/** The host's own controls, for any it wants to replace. */
+	primitives?: Partial<NgomatePrimitives>
+}
+
+export function NgomateApp({ theme, primitives, ...props }: NgomateAppProps) {
+	const merged = useMemo(() => ({ ...DEFAULT_PRIMITIVES, ...primitives }), [primitives])
+	return (
+		<PrimitivesProvider value={merged}>
+			<div className="ngm-app" style={themeVariables(theme) as CSSProperties}>
+				<AppContent {...props} />
+			</div>
+		</PrimitivesProvider>
+	)
+}
+
+function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | 'embedded'>) {
+	const { Button } = usePrimitives()
 	const [settings, setSettings] = useState<Settings | null>(null)
 	const [view, setView] = useState<View>('chat')
 	const [conversationId, setConversationId] = useState(() => makeId('chat'))
@@ -127,18 +157,22 @@ export function NgomateApp({ host }: { host: NgomateHost }) {
 		}
 	}, [host, JSON.stringify(addons)])
 
-	const getModel = useCallback(async (): Promise<ModelClient> => {
+	const models = host.models
+	// Whatever is chosen now: a local model used earlier still has to go.
+	const onBusyChange = useIdleUnload(models ? () => models.stop() : undefined)
+
+	const getModel = useCallback(async () => {
 		const choice = settings?.model
 		if (!choice) throw new Error('Choose a model first, under Model.')
 		if (choice.kind === 'server') {
 			const key = await host.getSecret('model-server')
-			return host.createModelClient(choice.baseUrl, choice.model, key ?? undefined)
+			return { client: host.createModelClient(choice.baseUrl, choice.model, key ?? undefined) }
 		}
 		if (!host.models)
 			throw new Error('This app cannot run a local model. Choose a model server under Model.')
 		// Asked every time: the host reuses a running model, and restarts one that has died.
-		const { baseUrl, apiKey } = await host.models.start(choice.id)
-		return host.createModelClient(baseUrl, choice.id, apiKey)
+		const { baseUrl, apiKey, contextTokens } = await host.models.start(choice.id)
+		return { client: host.createModelClient(baseUrl, choice.id, apiKey), contextTokens }
 	}, [host, settings?.model])
 
 	const deps = useMemo(
@@ -147,8 +181,9 @@ export function NgomateApp({ host }: { host: NgomateHost }) {
 			settings: settings ?? DEFAULT_SETTINGS,
 			getModel,
 			onSaved: refreshConversations,
+			onBusyChange,
 		}),
-		[host, settings, getModel, refreshConversations],
+		[host, settings, getModel, refreshConversations, onBusyChange],
 	)
 
 	const startNew = (begin: ChatStart | null = null) => {
@@ -159,43 +194,41 @@ export function NgomateApp({ host }: { host: NgomateHost }) {
 
 	const clearStart = useCallback(() => setStart(null), [])
 
-	if (!settings) return <div className="ngm-app ngm-loading">Loading…</div>
+	if (!settings) return <div className="ngm-loading">Loading…</div>
 
 	const nav = (target: View, label: string) => (
-		<button
-			type="button"
-			className={view === target ? 'ngm-nav ngm-nav-active' : 'ngm-nav'}
+		<Button
+			variant="nav"
+			active={view === target}
 			aria-current={view === target ? 'page' : undefined}
 			onClick={() => setView(target)}
 		>
 			{label}
-		</button>
+		</Button>
 	)
 
 	return (
-		<div className="ngm-app">
+		<>
 			<aside className="ngm-sidebar">
-				<h1 className="ngm-brand">{host.appName}</h1>
-				<button type="button" className="ngm-primary" onClick={() => startNew()}>
+				{!embedded && <h1 className="ngm-brand">{host.appName}</h1>}
+				<Button variant="primary" onClick={() => startNew()}>
 					New conversation
-				</button>
+				</Button>
 
 				<h2 className="ngm-side-title">Ready-made tasks</h2>
 				{host.tasks.map((task: TaskFile) => (
-					<button
-						type="button"
-						className="ngm-nav"
+					<Button
+						variant="nav"
 						key={task.id}
 						title={task.description}
 						onClick={() => startNew({ task })}
 					>
 						{task.title}
-					</button>
+					</Button>
 				))}
 				{prompts.map((prompt) => (
-					<button
-						type="button"
-						className="ngm-nav"
+					<Button
+						variant="nav"
 						key={prompt.name}
 						title={prompt.description}
 						onClick={() => {
@@ -208,30 +241,25 @@ export function NgomateApp({ host }: { host: NgomateHost }) {
 						}}
 					>
 						{prompt.name}
-					</button>
+					</Button>
 				))}
 
 				<h2 className="ngm-side-title">Conversations</h2>
 				<div className="ngm-side-list">
 					{conversations.map((conversation) => (
 						<div className="ngm-side-item" key={conversation.id}>
-							<button
-								type="button"
-								className={
-									view === 'chat' && conversation.id === conversationId
-										? 'ngm-nav ngm-nav-active'
-										: 'ngm-nav'
-								}
+							<Button
+								variant="nav"
+								active={view === 'chat' && conversation.id === conversationId}
 								onClick={() => {
 									setConversationId(conversation.id)
 									setView('chat')
 								}}
 							>
 								{conversation.title}
-							</button>
-							<button
-								type="button"
-								className="ngm-quiet"
+							</Button>
+							<Button
+								variant="quiet"
 								aria-label={`Delete ${conversation.title}`}
 								onClick={async () => {
 									await host.removeConversation(conversation.id)
@@ -240,7 +268,7 @@ export function NgomateApp({ host }: { host: NgomateHost }) {
 								}}
 							>
 								×
-							</button>
+							</Button>
 						</div>
 					))}
 				</div>
@@ -280,6 +308,6 @@ export function NgomateApp({ host }: { host: NgomateHost }) {
 				)}
 				{view === 'memory' && <MemoryPanel host={host} />}
 			</main>
-		</div>
+		</>
 	)
 }

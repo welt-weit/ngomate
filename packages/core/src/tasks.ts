@@ -58,5 +58,7 @@ export function taskFileToProfile(task: TaskFile): TaskProfile {
 		readTools: Array.isArray(task.tools) ? task.tools : [],
 		writeTools: [],
 		allTools: task.tools === 'all',
+		toolHint: `${task.title}. ${task.description}`,
+		instructionsInRequest: true,
 	}
 }

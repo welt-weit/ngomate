@@ -1,7 +1,4 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker'
 import type { ToolDefinition } from './model.js'
 
 export type ToolResult = { text: string; isError: boolean }
@@ -36,6 +33,9 @@ export type McpToolSourceOptions = {
 async function httpTransport(options: McpToolSourceOptions): Promise<Transport> {
 	if (!options.url) throw new Error('An MCP server needs a url or a transport')
 	const token = await options.getAccessToken?.()
+	const { StreamableHTTPClientTransport } = await import(
+		'@modelcontextprotocol/sdk/client/streamableHttp.js'
+	)
 	return new StreamableHTTPClientTransport(new URL(options.url), {
 		...(options.fetch ? { fetch: options.fetch } : {}),
 		...(token ? { requestInit: { headers: { authorization: `Bearer ${token}` } } } : {}),
@@ -44,12 +44,23 @@ async function httpTransport(options: McpToolSourceOptions): Promise<Transport> 
 
 export async function connectMcpToolSource(options: McpToolSourceOptions): Promise<ToolSource> {
 	const transport = options.transport ?? (await httpTransport(options))
+	// Loaded on first use: someone with no add-ons should not spend memory on the protocol library.
+	const [{ Client }, { CfWorkerJsonSchemaValidator }] = await Promise.all([
+		import('@modelcontextprotocol/sdk/client/index.js'),
+		import('@modelcontextprotocol/sdk/validation/cfworker'),
+	])
 	// The default validator compiles schemas with eval, which a desktop app's security policy blocks.
 	const client = new Client(
 		{ name: options.clientName ?? 'ngomate', version: '0.0.1' },
 		{ jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
 	)
-	await client.connect(transport)
+	try {
+		await client.connect(transport)
+	} catch (err) {
+		// A program add-on is already running by now, and nothing else would stop it.
+		await transport.close().catch(() => {})
+		throw err
+	}
 
 	return {
 		async listTools() {

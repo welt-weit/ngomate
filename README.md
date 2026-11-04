@@ -14,6 +14,16 @@ A free, open-source AI assistant for the back-office work of organizations in th
 
 Local models make mistakes, including mixing up real figures. NGOmate flags dates and links it cannot trace to your material or a tool, but you still need to check names and numbers before using a draft.
 
+## What it needs
+
+| Model | Download | Recommended memory |
+|---|---|---|
+| Qwen 3 8B, Ministral 3 8B, Granite 4.2 8B | about 5 GB | 12 GB or more |
+| Qwen 3 4B | 2.5 GB | 6 GB or more |
+| Granite 4.2 3B, with weaker drafts | 2.2 GB | 4 GB or more |
+
+The app offers the largest model that fits your computer, holds less text at once on a smaller one, and unloads the model after 10 minutes without use.
+
 ## Run it from source
 
 You need Node 22, Yarn 4 and [Rust](https://rustup.rs), plus the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your system.

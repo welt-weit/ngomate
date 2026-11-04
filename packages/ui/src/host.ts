@@ -16,6 +16,8 @@ export type ModelEntry = {
 export type ModelInfo = {
 	models: ModelEntry[]
 	ramGb: number
+	/** Memory free right now. */
+	freeRamGb: number
 	freeDiskBytes: number
 	runningId: string | null
 }
@@ -35,7 +37,8 @@ export interface ModelHost {
 	remove(id: string): Promise<void>
 	/** Installs a model file the person picks, for example from a USB stick. False if they cancel. */
 	importFile(id: string): Promise<boolean>
-	start(id: string): Promise<{ baseUrl: string; apiKey: string }>
+	/** Reuses a model already running. `contextTokens` is how much that model can hold at once. */
+	start(id: string): Promise<{ baseUrl: string; apiKey: string; contextTokens: number }>
 	stop(): Promise<void>
 }
 
@@ -50,6 +53,8 @@ export type Addon = {
 	enabled: boolean
 	/** Tools that delete or archive stay hidden unless the person turns this on. */
 	allowDestructive: boolean
+	/** Tools the person turned off. Each tool left on costs tokens when it is relevant. */
+	disabledTools?: string[]
 	/** The person's own note on it, such as that the service bills per use. */
 	note?: string
 }
@@ -80,6 +85,12 @@ export type AnswerNotice = {
 	unsourcedLinks: string[]
 	checkFigures: boolean
 	stopped: string | null
+	/** The conversation had grown too long, so the model did not see its beginning. */
+	earlierLeftOut?: boolean
+	/** The answer reached the length limit. */
+	cutOff?: boolean
+	/** Tools relevant to the request that there was no room to offer. */
+	toolsDidNotFit?: string[]
 }
 
 export type PickedDocument = {

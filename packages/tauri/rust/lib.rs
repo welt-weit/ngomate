@@ -54,6 +54,11 @@ fn store_write<R: TauriRuntime>(app: AppHandle<R>, area: String, name: String, t
 }
 
 #[tauri::command]
+fn conversation_list<R: TauriRuntime>(app: AppHandle<R>) -> Result<Vec<store::ConversationSummary>> {
+    store::conversation_summaries(&data_root(&app)?)
+}
+
+#[tauri::command]
 fn store_remove<R: TauriRuntime>(app: AppHandle<R>, area: String, name: String) -> Result<()> {
     store::remove(&data_root(&app)?, store::Area::parse(&area)?, &name)
 }
@@ -111,8 +116,13 @@ async fn save_document<R: TauriRuntime>(app: AppHandle<R>, suggested_name: Strin
 struct ModelInfo {
     models: Vec<models::ModelEntry>,
     ram_gb: u64,
+    free_ram_gb: f64,
     free_disk_bytes: u64,
     running_id: Option<String>,
+}
+
+fn total_ram_gb(system: &sysinfo::System) -> u64 {
+    (system.total_memory() as f64 / 1_073_741_824.0).round() as u64
 }
 
 #[tauri::command]
@@ -123,7 +133,8 @@ fn model_info<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>) -
     system.refresh_memory();
     Ok(ModelInfo {
         models: models::entries(&dir),
-        ram_gb: (system.total_memory() as f64 / 1_073_741_824.0).round() as u64,
+        ram_gb: total_ram_gb(&system),
+        free_ram_gb: models::free_ram_gb(system.total_memory(), system.used_memory(), system.available_memory()),
         free_disk_bytes: models::free_disk_bytes(&dir),
         running_id: runtime.running_id(),
     })
@@ -170,7 +181,9 @@ async fn runtime_start<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Ru
     let entry = model(&id)?;
     let server = runtime::find_server(app.path().resource_dir().ok())?;
     let path = models::installed_path(&models_dir(&app)?, entry);
-    runtime.start(&server, &id, &path).await
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    runtime.start(&server, &id, &path, runtime::context_for_ram(total_ram_gb(&system))).await
 }
 
 #[tauri::command]
@@ -238,6 +251,7 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             store_read,
             store_write,
             store_remove,
+            conversation_list,
             secret_get,
             secret_set,
             secret_delete,

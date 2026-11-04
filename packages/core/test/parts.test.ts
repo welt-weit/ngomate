@@ -222,6 +222,30 @@ Use only the material given.
 	})
 })
 
+describe('a request too large for the model', () => {
+	it('says so in words a person can act on', async () => {
+		const client = createOpenAiCompatibleClient({
+			baseUrl: 'http://x/v1',
+			model: 'm',
+			fetch: vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							error: {
+								type: 'exceed_context_size_error',
+								message: 'the request exceeds the available context size',
+							},
+						}),
+						{ status: 400 },
+					),
+			) as unknown as typeof fetch,
+		})
+		await expect(client.chat({ messages: [], tools: [] })).rejects.toThrow(
+			'more text than the model can hold',
+		)
+	})
+})
+
 describe('streaming', () => {
 	function stream(...events: string[]): typeof fetch {
 		return vi.fn(async () => {

@@ -26,9 +26,24 @@ import type {
 	Settings,
 } from './host.js'
 
-/** Room for the conversation in a model's context, in characters. The rest is the system text and the answer. */
-const HISTORY_CHARS = 30_000
-const DOCUMENT_CHARS = 24_000
+/** For a server the person runs, whose size is unknown. */
+const UNKNOWN_CONTEXT_TOKENS = 8192
+
+/**
+ * How much text fits a model, in characters: about 3 to a token, with a quarter of the room kept for the
+ * answer. It decides what is cut, so a small computer gets a shorter read rather than a failed request.
+ */
+export function textBudget(contextTokens: number = UNKNOWN_CONTEXT_TOKENS) {
+	const input = Math.round(contextTokens * 3 * 0.75)
+	return {
+		input,
+		document: Math.round(input * 0.6),
+		memory: Math.round(input * 0.1),
+		toolResult: Math.round(input * 0.25),
+		tools: Math.round(input * 0.25),
+		output: Math.round(contextTokens / 4),
+	}
+}
 
 const CHAT_PROFILE: TaskProfile = {
 	id: 'chat',
@@ -52,11 +67,27 @@ export function makeTitle(text: string): string {
 }
 
 /** The document as text for the model. The person is told when only part of it could be read. */
-export function documentBlock(document: PickedDocument): { text: string; cut: boolean } {
-	const cut = document.truncated || document.text.length > DOCUMENT_CHARS
-	const body = document.text.slice(0, DOCUMENT_CHARS)
+export function documentBlock(
+	document: PickedDocument,
+	maxChars = textBudget().document,
+): { text: string; cut: boolean } {
+	const cut = document.truncated || document.text.length > maxChars
+	const body = document.text.slice(0, maxChars)
 	const note = cut ? '\n[Only the first part of this document is included.]' : ''
 	return { text: `Document "${document.name}":\n"""\n${body}\n"""${note}`, cut }
+}
+
+/** One message from what the person gave, with the room for documents shared between them. */
+function joinInput(
+	promptText: string | undefined,
+	text: string,
+	documents: PickedDocument[],
+	documentChars: number,
+): string {
+	const each = Math.floor(documentChars / Math.max(1, documents.length))
+	return [promptText, text, ...documents.map((document) => documentBlock(document, each).text)]
+		.filter(Boolean)
+		.join('\n\n')
 }
 
 export function newConversation(id: string): Conversation {
@@ -80,9 +111,11 @@ export type PendingWrite = WriteRequest & { resolve: (approved: boolean) => void
 export type ChatDeps = {
 	host: NgomateHost
 	settings: Settings
-	getModel: () => Promise<ModelClient>
+	getModel: () => Promise<{ client: ModelClient; contextTokens?: number }>
 	/** Called after each change that should reach the conversation list. */
 	onSaved: () => void
+	/** A request started or ended, so a host can tell when a model is idle. */
+	onBusyChange?: (busy: boolean) => void
 }
 
 function connectTools(
@@ -100,9 +133,12 @@ function connectTools(
 				const source = await host.connectAddon(addon)
 				sources.push({
 					id: addon.id,
-					source: addon.allowDestructive
-						? source
-						: filterToolSource(source, (tool) => !isDestructiveTool(tool)),
+					source: filterToolSource(
+						source,
+						(tool) =>
+							!addon.disabledTools?.includes(tool.name) &&
+							(addon.allowDestructive || !isDestructiveTool(tool)),
+					),
 				})
 			} catch {
 				onProblem(addon.name)
@@ -128,6 +164,8 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	const [error, setError] = useState<string | null>(null)
 	const [problems, setProblems] = useState<string[]>([])
 	const [pendingWrite, setPendingWrite] = useState<PendingWrite | null>(null)
+	const [startingModel, setStartingModel] = useState(false)
+	const [budget, setBudget] = useState(() => textBudget())
 	const abort = useRef<AbortController | null>(null)
 
 	useEffect(() => {
@@ -156,13 +194,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	const send = useCallback(
 		async (text: string, options: SendOptions = {}) => {
 			const { task, documents = [], prompt } = options
-			const input = [
-				prompt?.text,
-				text,
-				...documents.map((document) => documentBlock(document).text),
-			]
-				.filter(Boolean)
-				.join('\n\n')
+			const input = joinInput(prompt?.text, text, documents, textBudget().document)
 			if (!input.trim()) return
 			// Checked here and not left to the model, which may answer from memory with calls that do not exist.
 			if (
@@ -176,6 +208,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 			}
 
 			setBusy(true)
+			depsRef.current.onBusyChange?.(true)
 			setError(null)
 			setProblems([])
 			setStreaming('')
@@ -185,6 +218,12 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 
 			let tools: ToolSource | null = null
 			let written = ''
+			// Shown in batches: every small piece redrawing the page is too much for a slow computer.
+			let flushTimer: ReturnType<typeof setTimeout> | null = null
+			const flush = () => {
+				flushTimer = null
+				setStreaming(written)
+			}
 			const title = conversation.messages.length
 				? conversation.title
 				: makeTitle(prompt?.title ?? task?.title ?? text)
@@ -193,7 +232,14 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				// Saved before anything can fail, because the composer has already been cleared.
 				await save({ ...conversation, title, updatedAt: new Date().toISOString(), messages: asked })
 
-				const model = await depsRef.current.getModel()
+				setStartingModel(true)
+				const { client: model, contextTokens } = await depsRef.current
+					.getModel()
+					.finally(() => setStartingModel(false))
+				const room = textBudget(contextTokens)
+				setBudget(room)
+				// What the person sees was cut before the model's size was known. This is cut to fit it.
+				const fitted = joinInput(prompt?.text, text, documents, room.document)
 				const seen = new Set<string>()
 				// A ready-made task gets notes as context, not as tools that distract a small model from the job.
 				tools = await connectTools(host, depsRef.current.settings.addons, !task, (name) => {
@@ -217,29 +263,38 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						})
 					})
 
-				const memory = await buildMemoryContext(host.memory).catch(() => '')
+				const memory = await buildMemoryContext(host.memory, room.memory).catch(() => '')
 				const context = [`Today is ${new Date().toISOString().slice(0, 10)}.`, memory]
 					.filter(Boolean)
 					.join('\n\n')
-				const history: ChatMessage[] = fitHistory(conversation.messages, HISTORY_CHARS)
+				const history: ChatMessage[] = fitHistory(
+					conversation.messages,
+					Math.max(0, room.input - room.tools - fitted.length - context.length),
+				)
 
 				const run = await runTask({
 					model,
 					tools,
 					profile: task ? taskFileToProfile(task) : CHAT_PROFILE,
-					input,
+					input: fitted,
 					context,
 					history,
+					maxToolResultChars: room.toolResult,
+					maxInputChars: room.input - room.tools,
+					maxToolChars: room.tools,
+					maxOutputTokens: room.output,
 					confirmWrite,
 					signal: controller.signal,
 					onText: (piece) => {
 						written += piece
-						setStreaming((shown) => shown + piece)
+						flushTimer ??= setTimeout(flush, 60)
 					},
 					onEvent: (event) => {
 						if (event.type === 'tool_call') {
 							// A new step starts, so what was shown belongs to the step before.
 							written = ''
+							if (flushTimer) clearTimeout(flushTimer)
+							flushTimer = null
 							setStreaming('')
 							setActivity(event.tool)
 						}
@@ -265,6 +320,9 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						unsourcedLinks: run.unsourcedLinks,
 						checkFigures: Boolean(task) && task?.tools === 'none',
 						stopped: STOPPED[run.status] ?? null,
+						earlierLeftOut: history.length < conversation.messages.length,
+						cutOff: run.cutOff,
+						toolsDidNotFit: run.toolsDidNotFit,
 					}
 					notices[messages.length - 1] = notice
 				} else if (STOPPED[run.status]) {
@@ -280,7 +338,9 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 			} catch (err) {
 				setError(err instanceof Error ? err.message : String(err))
 			} finally {
+				if (flushTimer) clearTimeout(flushTimer)
 				await tools?.close().catch(() => {})
+				depsRef.current.onBusyChange?.(false)
 				setStreaming('')
 				setActivity(null)
 				setBusy(false)
@@ -292,5 +352,17 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 
 	const stop = useCallback(() => abort.current?.abort(), [])
 
-	return { conversation, streaming, busy, activity, error, problems, pendingWrite, send, stop }
+	return {
+		conversation,
+		streaming,
+		busy,
+		activity,
+		startingModel,
+		documentLimit: budget.document,
+		error,
+		problems,
+		pendingWrite,
+		send,
+		stop,
+	}
 }

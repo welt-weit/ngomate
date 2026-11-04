@@ -23,6 +23,8 @@ export type ModelReply = {
 	toolCalls: ToolCall[]
 	promptTokens: number | null
 	completionTokens: number | null
+	/** The answer stopped at the length limit, not because it was finished. */
+	cutOff?: boolean
 }
 
 export type ChatRequest = {
@@ -31,6 +33,8 @@ export type ChatRequest = {
 	/** Called with each piece of the answer as it arrives. Thinking is never passed on. */
 	onText?: (text: string) => void
 	signal?: AbortSignal
+	/** Longest answer allowed, so a small model cannot run on for minutes repeating itself. */
+	maxOutputTokens?: number
 }
 
 export interface ModelClient {
@@ -59,6 +63,7 @@ type WireToolCall = {
 
 type WireReply = {
 	choices?: {
+		finish_reason?: string | null
 		message?: {
 			content?: string | null
 			tool_calls?: WireToolCall[]
@@ -130,6 +135,7 @@ async function readStream(response: Response, onText: (text: string) => void): P
 	const toolCalls = new Map<number, { id?: string; name: string; arguments: string }>()
 	let content = ''
 	let usage: WireReply['usage']
+	let finishReason: string | null = null
 	let pending = ''
 
 	const handle = (line: string) => {
@@ -137,10 +143,14 @@ async function readStream(response: Response, onText: (text: string) => void): P
 		const data = line.slice(5).trim()
 		if (!data || data === '[DONE]') return
 		const chunk = JSON.parse(data) as {
-			choices?: { delta?: { content?: string | null; tool_calls?: WireToolCall[] } }[]
+			choices?: {
+				finish_reason?: string | null
+				delta?: { content?: string | null; tool_calls?: WireToolCall[] }
+			}[]
 			usage?: WireReply['usage']
 		}
 		if (chunk.usage) usage = chunk.usage
+		finishReason = chunk.choices?.[0]?.finish_reason ?? finishReason
 		const delta = chunk.choices?.[0]?.delta
 		if (delta?.content) {
 			content += delta.content
@@ -172,6 +182,7 @@ async function readStream(response: Response, onText: (text: string) => void): P
 	return {
 		choices: [
 			{
+				finish_reason: finishReason,
 				message: {
 					content,
 					tool_calls: [...toolCalls.values()].map((call) => ({
@@ -191,7 +202,7 @@ export function createOpenAiCompatibleClient(options: OpenAiCompatibleOptions): 
 	const url = `${options.baseUrl.replace(/\/$/, '')}/chat/completions`
 
 	return {
-		async chat({ messages, tools, onText, signal }) {
+		async chat({ messages, tools, onText, signal, maxOutputTokens }) {
 			// By hand: the WebKit in older macOS versions has neither AbortSignal.any nor .timeout.
 			const controller = new AbortController()
 			const abort = () => controller.abort()
@@ -210,6 +221,7 @@ export function createOpenAiCompatibleClient(options: OpenAiCompatibleOptions): 
 						model: options.model,
 						temperature: options.temperature ?? 0,
 						messages: messages.map(toWire),
+						...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
 						...(onText ? { stream: true, stream_options: { include_usage: true } } : {}),
 						...(tools.length
 							? {
@@ -227,9 +239,17 @@ export function createOpenAiCompatibleClient(options: OpenAiCompatibleOptions): 
 					signal: controller.signal,
 				})
 				if (!response.ok) {
-					throw new Error(
-						`Model endpoint answered ${response.status}: ${(await response.text()).slice(0, 300)}`,
-					)
+					const detail = await response.text()
+					// What a local model answers when a request is larger than it was started to hold.
+					if (
+						(response.status === 400 || response.status === 413) &&
+						/exceed.{0,20}context|context.{0,40}exceed|too long|maximum context/i.test(detail)
+					) {
+						throw new Error(
+							'This is more text than the model can hold at once. Attach less, or start a new conversation.',
+						)
+					}
+					throw new Error(`Model endpoint answered ${response.status}: ${detail.slice(0, 300)}`)
 				}
 
 				const body = onText
@@ -252,6 +272,7 @@ export function createOpenAiCompatibleClient(options: OpenAiCompatibleOptions): 
 					})),
 					promptTokens: body.usage?.prompt_tokens ?? null,
 					completionTokens: body.usage?.completion_tokens ?? null,
+					cutOff: body.choices?.[0]?.finish_reason === 'length',
 				}
 			} finally {
 				clearTimeout(timer)

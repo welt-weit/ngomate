@@ -46,6 +46,19 @@ describe('connectMcpToolSource', () => {
 		getValidator.mockRestore()
 	})
 
+	it('closes the connection when connecting fails, so no program is left running', async () => {
+		const close = vi.fn(async () => {})
+		const transport = {
+			start: async () => {},
+			send: async () => {
+				throw new Error('not an MCP server')
+			},
+			close,
+		}
+		await expect(connectMcpToolSource({ transport })).rejects.toThrow('not an MCP server')
+		expect(close).toHaveBeenCalled()
+	})
+
 	it('reads the read-only mark, and leaves an unmarked tool unmarked', async () => {
 		const tools = await connect()
 		const listed = await tools.listTools()
