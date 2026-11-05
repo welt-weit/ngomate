@@ -8,6 +8,8 @@ import {
 	type TextareaHTMLAttributes,
 	createContext,
 	useContext,
+	useLayoutEffect,
+	useRef,
 } from 'react'
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -21,6 +23,11 @@ export type TextAreaProps = TextareaHTMLAttributes<HTMLTextAreaElement>
 export type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & { children: ReactNode }
 export type CheckboxProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>
 export type ChipProps = HTMLAttributes<HTMLSpanElement>
+export type DialogProps = {
+	title: string
+	onClose: () => void
+	children: ReactNode
+}
 
 /**
  * The controls the interface is built from. A host replaces any of them with its own, so the interface
@@ -33,11 +40,54 @@ export type NgomatePrimitives = {
 	Select: ComponentType<SelectProps>
 	Checkbox: ComponentType<CheckboxProps>
 	Chip: ComponentType<ChipProps>
+	/** Shown only while it is on the page. */
+	Dialog: ComponentType<DialogProps>
 }
 
 const VARIANT_CLASS = { default: '', primary: 'ngm-primary', quiet: 'ngm-quiet', nav: 'ngm-nav' }
 
 const classes = (...names: (string | undefined | false)[]) => names.filter(Boolean).join(' ')
+
+function DefaultDialog({ title, onClose, children }: DialogProps) {
+	const ref = useRef<HTMLDialogElement>(null)
+	// Layout effect, so its cleanup runs while the dialog is still on the page: closing it, not removing
+	// it, is what gives focus back to the button that opened it.
+	useLayoutEffect(() => {
+		// The browser's own modal keeps focus inside and closes on Escape.
+		const dialog = ref.current
+		if (!dialog) return
+		if (typeof dialog.showModal === 'function') {
+			if (!dialog.open) dialog.showModal()
+			dialog.querySelector<HTMLElement>('[data-autofocus]')?.focus()
+			return () => dialog.close()
+		}
+		dialog.setAttribute('open', '')
+	}, [])
+	return (
+		<dialog
+			ref={ref}
+			className="ngm-dialog"
+			aria-label={title}
+			onCancel={(event) => {
+				event.preventDefault()
+				onClose()
+			}}
+			// A second Escape closes it even when the first was refused. If it is meant to stay, show it again.
+			onClose={(event) => {
+				const dialog = event.currentTarget
+				if (dialog.isConnected && !dialog.open) dialog.showModal()
+			}}
+		>
+			<div className="ngm-dialog-head">
+				<h3>{title}</h3>
+				<button type="button" className="ngm-button ngm-quiet" aria-label="Close" onClick={onClose}>
+					×
+				</button>
+			</div>
+			{children}
+		</dialog>
+	)
+}
 
 export const DEFAULT_PRIMITIVES: NgomatePrimitives = {
 	Button: ({ variant = 'default', active, className, type = 'button', ...props }) => (
@@ -63,6 +113,7 @@ export const DEFAULT_PRIMITIVES: NgomatePrimitives = {
 	),
 	Checkbox: ({ className, ...props }) => <input type="checkbox" className={className} {...props} />,
 	Chip: ({ className, ...props }) => <span className={classes('ngm-chip', className)} {...props} />,
+	Dialog: DefaultDialog,
 }
 
 const PrimitivesContext = createContext<NgomatePrimitives>(DEFAULT_PRIMITIVES)

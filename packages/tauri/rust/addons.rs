@@ -84,7 +84,7 @@ impl Addons {
 
     pub async fn send(&self, id: &str, line: &str) -> Result<()> {
         let mut running = self.0.lock().await;
-        let process = running.get_mut(id).ok_or_else(|| Error::msg("This add-on is not running."))?;
+        let process = running.get_mut(id).ok_or_else(|| Error::msg("This connector is not running."))?;
         process.stdin.write_all(line.as_bytes()).await?;
         process.stdin.write_all(b"\n").await?;
         process.stdin.flush().await?;

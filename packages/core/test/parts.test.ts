@@ -8,6 +8,7 @@ import {
 	memoryNoteName,
 } from '../src/memory.js'
 import { createOpenAiCompatibleClient, createThinkingFilter } from '../src/model.js'
+import { readDocument, splitPassages } from '../src/passages.js'
 import { combineToolSources, filterToolSource, isDestructiveTool } from '../src/sources.js'
 import { parseTaskFile, taskFileToProfile } from '../src/tasks.js'
 
@@ -163,6 +164,89 @@ describe('memory', () => {
 		expect(context).not.toContain('xxx')
 		expect(context).toContain('Other notes, available through read_memory: old')
 		expect(await buildMemoryContext(memoryStore())).toBe('')
+	})
+})
+
+describe('reading a long document', () => {
+	const filler = (place: string) =>
+		`Section on ${place}.\n\n${`The team in ${place} met the committee and wrote down what changed. `.repeat(16)}`
+	const places = ['Larem', 'Tosa', 'Ubeni', 'Marwa', 'Kiro', 'Selva', 'Dunga', 'Palu']
+	const sections = places.map(filler)
+	sections[5] += '\n\nThe borehole cost EUR 18,400.'
+	const doc = `Annual report.\n\n${sections.join('\n\n')}`
+
+	it('sends a short document as it is', () => {
+		expect(readDocument('Short.', 'anything', 1000)).toEqual({ text: 'Short.', mode: 'whole' })
+	})
+
+	it('finds a fact far past the point where a plain cut would stop', () => {
+		const read = readDocument(doc, 'What did the borehole cost?', 2500)
+		expect(doc.indexOf('EUR 18,400')).toBeGreaterThan(2500)
+		expect(read.mode).toBe('relevant')
+		expect(read.text).toContain('EUR 18,400')
+		expect(read.text.length).toBeLessThanOrEqual(2500)
+	})
+
+	it('keeps the opening, so the model knows what the document is', () => {
+		expect(readDocument(doc, 'What did the borehole cost?', 2500).text).toContain('Annual report.')
+	})
+
+	it('takes something from every part for a summary', () => {
+		const read = readDocument(doc, 'Summarize this', 3000)
+		expect(read.mode).toBe('overview')
+		for (const place of places) expect(read.text).toContain(`Section on ${place}`)
+		expect(read.text.length).toBeLessThanOrEqual(3000)
+	})
+
+	it('does the same when the words of the request appear nowhere, or there are none', () => {
+		expect(readDocument(doc, 'Quelle est la conclusion?', 3000).mode).toBe('overview')
+		expect(readDocument(doc, '', 3000).mode).toBe('overview')
+	})
+
+	it('splits at paragraphs, and also a paragraph longer than a passage', () => {
+		expect(splitPassages('one\n\ntwo', 100)).toEqual(['one\n\ntwo'])
+		expect(splitPassages('x'.repeat(250), 100).join('')).toBe('x'.repeat(250))
+	})
+
+	it('does not cut a sentence in two when a long paragraph has to be split', () => {
+		const sentences = Array.from(
+			{ length: 40 },
+			(_, i) => `The tank in village ${i} holds water.`,
+		).join(' ')
+		for (const passage of splitPassages(sentences, 200)) expect(passage.endsWith('.')).toBe(true)
+	})
+
+	it('reaches the end of a very long document in a summary', () => {
+		const long = Array.from({ length: 300 }, (_, i) => `Part ${i} ${'words '.repeat(100)}`).join(
+			'\n\n',
+		)
+		const read = readDocument(long, 'Summarize this', 3000)
+		expect(read.text.length).toBeLessThanOrEqual(3000)
+		expect(read.text).toContain('Part 0 ')
+		expect(
+			Number(
+				read.text
+					.match(/Part (\d+) /g)
+					?.at(-1)
+					?.match(/\d+/)?.[0],
+			),
+		).toBeGreaterThan(270)
+	})
+
+	it('recognises a request for the whole in other languages', () => {
+		expect(readDocument(doc, 'Fais un résumé', 2500).mode).toBe('overview')
+		expect(readDocument(doc, 'Gib mir einen Überblick', 2500).mode).toBe('overview')
+		expect(readDocument(doc, 'What are the key points?', 2500).mode).toBe('overview')
+	})
+
+	it('counts the word asked above words that only mean something similar', () => {
+		const text = `${'Money and a phone call were discussed at length here. '.repeat(40)}\n\n${'Filler. '.repeat(200)}\n\nThe grant limit is EUR 5,000.\n\n${'More filler. '.repeat(200)}`
+		expect(readDocument(text, 'What is the grant limit?', 900).text).toContain('EUR 5,000')
+	})
+
+	it('does not take a word that merely looks like one for a request to summarize', () => {
+		expect(readDocument(doc, 'When did the borehole work resume?', 2500).mode).toBe('relevant')
+		expect(readDocument(doc, 'Give me a résumé of this', 2500).mode).toBe('overview')
 	})
 })
 

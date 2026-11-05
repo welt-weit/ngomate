@@ -150,6 +150,17 @@
 	overflow-y: auto;
 }
 
+.ngm-chat-holder {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.ngm-chat-holder[hidden] {
+	display: none;
+}
+
 .ngm-chat {
 	display: flex;
 	flex: 1;
@@ -414,15 +425,111 @@
 	font-size: 14px;
 }
 
-.ngm-tool-switch {
-	display: flex;
-	margin: 2px 0;
-}
-
 .ngm-inline {
 	display: inline-flex;
 	flex-direction: row;
 	gap: 6px;
 	align-items: center;
 	font-size: 14px;
+}
+
+.ngm-addon-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+	gap: 12px;
+	margin-top: 14px;
+}
+
+.ngm-addon-card {
+	margin: 0;
+}
+
+.ngm-addon-card p {
+	margin: 0;
+}
+
+.ngm-addon-card-action {
+	padding-top: 6px;
+	margin-top: auto;
+}
+
+.ngm-dialog {
+	width: min(480px, calc(100vw - 32px));
+	max-height: calc(100vh - 64px);
+	padding: 20px;
+	overflow-y: auto;
+	font-family: var(--ngm-font, inherit);
+	font-size: 15px;
+	line-height: 1.5;
+	color: var(--ngm-text, inherit);
+	background: var(--ngm-bg, canvas);
+	border: 1px solid var(--ngm-line);
+	border-radius: calc(var(--ngm-radius, 8px) * 1.5);
+}
+
+.ngm-dialog::backdrop {
+	background: rgb(0 0 0 / 45%);
+}
+
+.ngm-dialog-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 12px;
+}
+
+.ngm-dialog-head h3 {
+	margin: 0;
+	font-family: var(--ngm-heading-font, inherit);
+	font-size: 17px;
+	font-weight: 700;
+}
+
+.ngm-addon-details {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.ngm-addon-details p {
+	margin: 0;
+}
+
+.ngm-tool-group h4 {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.ngm-tool-switch {
+	display: flex;
+	gap: 8px;
+	align-items: flex-start;
+	margin-top: 8px;
+	font-size: 14px;
+}
+
+.ngm-tool-switch input {
+	margin-top: 3px;
+}
+
+.ngm-tool-about {
+	display: block;
+}
+
+.ngm-addon-facts {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 2px 10px;
+	margin: 0;
+	font-size: 13px;
+}
+
+.ngm-addon-facts dt {
+	color: var(--ngm-muted);
+}
+
+.ngm-addon-facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
 }

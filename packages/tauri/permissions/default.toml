@@ -18,6 +18,8 @@ permissions = [
   "allow-model-cancel-download",
   "allow-model-remove",
   "allow-model-import",
+  "allow-model-folder-choose",
+  "allow-model-folder-reset",
   "allow-runtime-start",
   "allow-runtime-stop",
   "allow-addon-start",

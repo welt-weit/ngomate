@@ -36,6 +36,35 @@ pub struct ModelEntry {
 #[derive(Default)]
 pub struct Downloads(Mutex<HashMap<String, Arc<AtomicBool>>>);
 
+/// Held while the model folder changes. Nothing may read or write models until it is done, or a file
+/// ends up stranded in the folder that was just left.
+#[derive(Default)]
+pub struct FolderChange(AtomicBool);
+
+pub struct FolderChangeGuard<'a>(&'a FolderChange);
+
+impl Drop for FolderChangeGuard<'_> {
+    fn drop(&mut self) {
+        (self.0).0.store(false, Ordering::SeqCst);
+    }
+}
+
+impl FolderChange {
+    pub fn begin(&self) -> Result<FolderChangeGuard<'_>> {
+        if self.0.swap(true, Ordering::SeqCst) {
+            return Err(Error::msg("The model folder is already being changed."));
+        }
+        Ok(FolderChangeGuard(self))
+    }
+
+    pub fn check(&self) -> Result<()> {
+        if self.0.load(Ordering::SeqCst) {
+            return Err(Error::msg("The models are being moved. Try again when that is done."));
+        }
+        Ok(())
+    }
+}
+
 impl Downloads {
     fn begin(&self, id: &str) -> Result<Arc<AtomicBool>> {
         let mut active = self.0.lock().unwrap();
@@ -49,6 +78,10 @@ impl Downloads {
 
     fn end(&self, id: &str) {
         self.0.lock().unwrap().remove(id);
+    }
+
+    pub fn any_active(&self) -> bool {
+        !self.0.lock().unwrap().is_empty()
     }
 
     pub fn cancel(&self, id: &str) {
@@ -113,9 +146,17 @@ fn writing(err: std::io::Error) -> Error {
     err.into()
 }
 
+/// Windows gives back `\\\\?\\D:\\models`, which never starts with the disk's own `D:\\`.
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(plain) => PathBuf::from(plain),
+        None => path,
+    }
+}
+
 pub fn free_disk_bytes(dir: &Path) -> u64 {
     let disks = sysinfo::Disks::new_with_refreshed_list();
-    let target = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let target = without_verbatim_prefix(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
     disks
         .iter()
         .filter(|disk| target.starts_with(disk.mount_point()))
@@ -292,6 +333,78 @@ pub async fn remove(dir: &Path, model: &Model) -> Result<()> {
     Ok(())
 }
 
+/// Every file of the catalog in this folder, finished or partial.
+fn files_in(dir: &Path) -> Vec<PathBuf> {
+    catalog::MODELS
+        .iter()
+        .flat_map(|model| [installed_path(dir, model), partial_path(dir, model)])
+        .filter(|path| path.exists())
+        .collect()
+}
+
+pub fn has_models(dir: &Path) -> bool {
+    !files_in(dir).is_empty()
+}
+
+/// Moves what is in one folder to another. A file leaves the old folder only once it is complete in the
+/// new one, so stopping partway, or a drive pulled out, loses nothing.
+pub async fn move_folder(from: &Path, to: &Path) -> Result<()> {
+    tokio::fs::create_dir_all(to).await?;
+    let files = files_in(from);
+    let mut needed = 0;
+    let mut moved = 0;
+    for file in &files {
+        needed += tokio::fs::metadata(file).await?.len();
+    }
+    // Moving within one disk needs no room, and is what a rename does at once.
+    for file in files {
+        let Some(name) = file.file_name() else { continue };
+        let target = to.join(name);
+        if tokio::fs::rename(&file, &target).await.is_ok() {
+            needed -= tokio::fs::metadata(&target).await?.len();
+            moved += 1;
+            continue;
+        }
+        let so_far = |text: String| {
+            if moved == 0 {
+                Error::msg(text)
+            } else {
+                Error::msg(format!(
+                    "{text} {moved} of the files are already in {}. Moving again finishes the rest.",
+                    to.display()
+                ))
+            }
+        };
+        if let Some(problem) = disk_problem(needed, free_disk_bytes(to)) {
+            return Err(so_far(problem));
+        }
+        let size = tokio::fs::metadata(&file).await?.len();
+        let copying = to.join(format!("{}.moving", name.to_string_lossy()));
+        if let Err(err) = tokio::fs::copy(&file, &copying).await {
+            let _ = tokio::fs::remove_file(&copying).await;
+            return Err(so_far(writing(err).to_string()));
+        }
+        // Only a complete copy, safely on the disk, may replace the original: a drive can be pulled out.
+        let complete = async {
+            let copy = tokio::fs::File::open(&copying).await?;
+            copy.sync_all().await?;
+            Ok::<bool, std::io::Error>(copy.metadata().await?.len() == size)
+        };
+        if !complete.await.unwrap_or(false) {
+            let _ = tokio::fs::remove_file(&copying).await;
+            return Err(so_far(format!("Copying {} did not finish.", name.to_string_lossy())));
+        }
+        if let Err(err) = tokio::fs::rename(&copying, &target).await {
+            let _ = tokio::fs::remove_file(&copying).await;
+            return Err(err.into());
+        }
+        tokio::fs::remove_file(&file).await?;
+        needed -= size;
+        moved += 1;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,11 +534,55 @@ mod tests {
         assert!(import(&models, &other_size, &source).await.unwrap_err().to_string().contains("size"));
     }
 
+    #[tokio::test]
+    async fn moves_models_and_partial_downloads_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let (from, to) = (dir.path().join("from"), dir.path().join("to/deeper"));
+        std::fs::create_dir_all(&from).unwrap();
+        let first = &catalog::MODELS[0];
+        let second = &catalog::MODELS[1];
+        std::fs::write(installed_path(&from, first), b"model").unwrap();
+        std::fs::write(partial_path(&from, second), b"part").unwrap();
+        std::fs::write(from.join("my-notes.txt"), b"mine").unwrap();
+        assert!(has_models(&from));
+        move_folder(&from, &to).await.unwrap();
+        assert_eq!(std::fs::read(installed_path(&to, first)).unwrap(), b"model");
+        assert_eq!(std::fs::read(partial_path(&to, second)).unwrap(), b"part");
+        assert!(!has_models(&from));
+        assert!(from.join("my-notes.txt").exists());
+        assert!(!to.join("my-notes.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn moving_an_empty_folder_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+        move_folder(&dir.path().join("none"), &dir.path().join("new")).await.unwrap();
+        assert!(dir.path().join("new").exists());
+    }
+
     #[test]
     fn reads_free_memory_even_where_the_system_reports_none_available() {
         let gb = 1_073_741_824;
         assert_eq!(free_ram_gb(16 * gb, 10 * gb, 4 * gb), 4.0);
         assert_eq!(free_ram_gb(16 * gb, 10 * gb, 0), 6.0);
+    }
+
+    #[test]
+    fn reads_a_windows_path_without_its_verbatim_prefix() {
+        assert_eq!(without_verbatim_prefix(PathBuf::from(r"\\?\D:\models")), PathBuf::from(r"D:\models"));
+        assert_eq!(without_verbatim_prefix(PathBuf::from("/home/a")), PathBuf::from("/home/a"));
+    }
+
+    #[test]
+    fn locks_out_everything_else_during_a_folder_change_and_lets_go_after() {
+        let change = FolderChange::default();
+        assert!(change.check().is_ok());
+        {
+            let _held = change.begin().unwrap();
+            assert!(change.check().is_err());
+            assert!(change.begin().is_err());
+        }
+        assert!(change.check().is_ok());
     }
 
     #[test]

@@ -56,12 +56,14 @@ const RELATED_WORDS = [
 	['search', 'find', 'look', 'lookup'],
 ]
 
-function wordsOf(text: string): Set<string> {
+/** The meaningful words of a text, with the related words of this field unless told not to. */
+export function wordsOf(text: string, withRelated = true): Set<string> {
 	const words = new Set<string>()
 	for (const raw of text.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
 		const word = raw.length > 3 ? raw.replace(/(ies|s)$/, (end) => (end === 'ies' ? 'y' : '')) : raw
 		if (word.length < 3 || STOP_WORDS.has(word)) continue
 		words.add(word)
+		if (!withRelated) continue
 		for (const group of RELATED_WORDS) {
 			if (group.includes(word)) for (const related of group) words.add(related)
 		}

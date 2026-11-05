@@ -14,6 +14,8 @@ const COMMANDS: &[&str] = &[
     "model_cancel_download",
     "model_remove",
     "model_import",
+    "model_folder_choose",
+    "model_folder_reset",
     "runtime_start",
     "runtime_stop",
     "addon_start",

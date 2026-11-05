@@ -271,6 +271,35 @@ describe('a long chain of tool calls', () => {
 	})
 })
 
+describe('attachments', () => {
+	it('sends them with this message, keeps them out of the conversation and accepts their dates', async () => {
+		const { model, chat } = scripted(say('Closes 2027-03-01, as written.'))
+		const run = await runTask({
+			model,
+			tools: source().tools,
+			profile,
+			input: 'When does it close?',
+			attachments: 'Passage: closes 2027-03-01.',
+		})
+		const request = chat.mock.calls[0] as unknown as [{ messages: { content: string }[] }]
+		expect(request[0].messages[1]?.content).toContain('Passage: closes')
+		expect(run.messages[0]?.content).toBe('When does it close?')
+		expect(run.unsourcedDates).toEqual([])
+	})
+
+	it('accepts a date from the full text when only a part was sent', async () => {
+		const { model } = scripted(say('It began 2027-01-02.'))
+		const run = await runTask({
+			model,
+			tools: source().tools,
+			profile,
+			input: 'and the start?',
+			sourceTexts: ['The work began on 2 January 2027.'],
+		})
+		expect(run.unsourcedDates).toEqual([])
+	})
+})
+
 describe('fitHistory', () => {
 	const history = [
 		{ role: 'user' as const, content: 'x'.repeat(100) },

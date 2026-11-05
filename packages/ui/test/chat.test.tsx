@@ -3,6 +3,7 @@ import type { ChatRequest, ModelClient, ModelReply, ToolSource } from '@ngomate/
 import { cleanup, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { connectionProblem, splitCommand } from '../src/AddonsPanel.js'
 import { NgomateApp } from '../src/NgomateApp.js'
 import { recommendedModelId } from '../src/format.js'
 import {
@@ -76,7 +77,7 @@ function makeHost(
 		saveDocument: async () => true,
 		createModelClient: () => client,
 		connectAddon: async () => {
-			throw new Error('no add-ons here')
+			throw new Error('no connectors here')
 		},
 		getSecret: async () => null,
 		setSecret: async () => {},
@@ -261,6 +262,134 @@ describe('chat', () => {
 		expect(await screen.findByText(/did not see the earliest part/)).toBeTruthy()
 	})
 
+	it('says it is reading a document until the first words come', async () => {
+		let release: (reply: ModelReply) => void = () => {}
+		const { host, chat } = makeHost([])
+		chat.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					release = resolve
+				}),
+		)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Attach document' }))
+		await screen.findByText('notes.txt')
+		await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+		expect(await screen.findByText(/Reading your document/)).toBeTruthy()
+		release(say('Done reading.'))
+		await screen.findByText('Done reading.')
+		expect(screen.queryByText(/Reading your document/)).toBeNull()
+	})
+
+	it('keeps the document with the conversation, and finds another part for a follow-up', async () => {
+		const text = `Report.\n\n${'Filler about the team and the visits. '.repeat(300)}\n\nThe borehole cost EUR 18,400.\n\n${'More filler about meetings. '.repeat(300)}\n\nThe auditor was Amara Okafor.`
+		const { host, chat, conversations } = makeHost(
+			[say('First.'), say('Second.')],
+			{},
+			{
+				pickDocument: async () => ({ name: 'report.pdf', text, truncated: false }),
+			},
+		)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Attach document' }))
+		await screen.findByText('report.pdf')
+		await typeAndSend('What did the borehole cost?')
+		await screen.findByText('First.')
+		await typeAndSend('Who was the auditor?')
+		await screen.findByText('Second.')
+		const second = chat.mock.calls[1]?.[0] as ChatRequest
+		const sent = second.messages.map((message) => message.content ?? '').join('\n')
+		expect(sent).toContain('Amara Okafor')
+		const stored = [...conversations.values()][0]
+		expect(stored?.documents?.[0]?.text).toBe(text)
+		expect(stored?.messages[0]?.content).toBe(
+			'What did the borehole cost?\n\n[Attached: report.pdf]',
+		)
+		expect(await screen.findAllByText(/Read only part of report.pdf/)).toHaveLength(2)
+	})
+
+	it('lets a document be taken out, so later messages no longer send it', async () => {
+		const { host, chat, conversations } = makeHost(
+			[say('First.'), say('Second.')],
+			{},
+			{
+				pickDocument: async () => ({
+					name: 'private.txt',
+					text: 'Confidential words.',
+					truncated: false,
+				}),
+			},
+		)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Attach document' }))
+		await screen.findByText('private.txt')
+		await typeAndSend('Read this')
+		await screen.findByText('First.')
+		await userEvent.click(await screen.findByRole('button', { name: 'Stop using private.txt' }))
+		await waitFor(() => expect([...conversations.values()][0]?.documents).toEqual([]))
+		await typeAndSend('Anything else?')
+		await screen.findByText('Second.')
+		const second = chat.mock.calls[1]?.[0] as ChatRequest
+		const sentLast = second.messages.filter((message) => message.role === 'user').at(-1)?.content
+		expect(sentLast).not.toContain('Confidential')
+	})
+
+	it('sends a file attached twice only once', async () => {
+		const { host, chat } = makeHost(
+			[say('ok')],
+			{},
+			{
+				pickDocument: async () => ({ name: 'a.txt', text: 'Same words.', truncated: false }),
+			},
+		)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Attach document' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Attach document' }))
+		await waitFor(() => expect(screen.getAllByText('a.txt')).toHaveLength(2))
+		await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+		await screen.findByText('ok')
+		const sent = (chat.mock.calls[0]?.[0] as ChatRequest).messages.at(1)?.content ?? ''
+		expect(sent.match(/Document "a.txt"/g)).toHaveLength(1)
+	})
+
+	it('finds the earlier passage again for a short follow-up', async () => {
+		const text = `Report.\n\n${'Filler about visits. '.repeat(400)}\n\nThe borehole cost EUR 18,400 in Tosa.\n\n${'More filler. '.repeat(400)}`
+		const { host, chat } = makeHost(
+			[say('First.'), say('Second.')],
+			{},
+			{
+				pickDocument: async () => ({ name: 'r.txt', text, truncated: false }),
+			},
+		)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Attach document' }))
+		await screen.findByText('r.txt')
+		await typeAndSend('What did the borehole cost?')
+		await screen.findByText('First.')
+		await typeAndSend('Why?')
+		await screen.findByText('Second.')
+		const sent = (chat.mock.calls[1]?.[0] as ChatRequest).messages
+			.filter((m) => m.role === 'user')
+			.at(-1)?.content
+		expect(sent).toContain('EUR 18,400')
+	})
+
+	it('says when a file was too long to read to the end, wherever the answer looked', async () => {
+		const { host } = makeHost(
+			[say('Answer.')],
+			{},
+			{
+				pickDocument: async () => ({ name: 'big.pdf', text: 'x '.repeat(30_000), truncated: true }),
+			},
+		)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Attach document' }))
+		await screen.findByText(/only the first part of the file can be read/)
+		await typeAndSend('Anything?')
+		await screen.findByText('Answer.')
+		expect(await screen.findByText(/big.pdf is too long to read to the end/)).toBeTruthy()
+	})
+
 	it('reports a model failure and keeps what the person wrote', async () => {
 		const { host, conversations } = makeHost([])
 		render(<NgomateApp host={host} />)
@@ -269,7 +398,7 @@ describe('chat', () => {
 		await waitFor(() => expect([...conversations.values()][0]?.messages[0]?.content).toBe('Hi'))
 	})
 
-	it('carries on without an add-on that cannot be reached, and names it', async () => {
+	it('carries on without a connector that cannot be reached, and names it', async () => {
 		const addon = {
 			id: 'a',
 			name: 'Offline tool',
@@ -284,7 +413,7 @@ describe('chat', () => {
 		expect(await screen.findByText(/Could not reach: Offline tool/)).toBeTruthy()
 	})
 
-	it('hides an add-on tool that deletes unless the person allows it', async () => {
+	it('hides a connector tool that deletes unless the person allows it', async () => {
 		const callTool = vi.fn(async () => ({ text: 'gone', isError: false }))
 		const source: ToolSource = {
 			listTools: async () => [
@@ -322,6 +451,189 @@ describe('chat', () => {
 		await typeAndSend('Hi')
 		await screen.findByText(/Hello/)
 		expect(container.querySelector('img')).toBeNull()
+	})
+})
+
+describe('connectors', () => {
+	const tools: ToolSource = {
+		listTools: async () => [
+			{
+				name: 'search_grants',
+				description: 'Search grants',
+				inputSchema: {},
+				annotations: { readOnly: true },
+			},
+			{ name: 'add_contact', description: 'Add a contact', inputSchema: {} },
+			{ name: 'delete_page', description: 'Delete a page', inputSchema: {} },
+		],
+		callTool: async () => ({ text: '', isError: false }),
+		close: async () => {},
+	}
+
+	function open(overrides: Partial<NgomateHost>, settings: Partial<Settings> = {}) {
+		const saved: Settings[] = []
+		const { host } = makeHost([], settings, {
+			connectAddon: async () => tools,
+			saveSettings: async (next) => void saved.push(next),
+			...overrides,
+		})
+		render(<NgomateApp host={host} />)
+		return { saved }
+	}
+	const toConnectors = async () =>
+		userEvent.click(await screen.findByRole('button', { name: 'Connectors' }))
+
+	it('connects a suggested connector with only a token, and checks it before keeping it', async () => {
+		const connectAddon = vi.fn(async () => tools)
+		const setSecret = vi.fn(async () => {})
+		const { saved } = open({ connectAddon, setSecret })
+		await toConnectors()
+		await userEvent.click(await screen.findByRole('button', { name: 'Connect Apify' }))
+		await userEvent.type(screen.getByLabelText(/Paste your token/), 'my-token')
+		await userEvent.click(screen.getByRole('button', { name: 'Connect' }))
+		await waitFor(() => expect(saved.at(-1)?.addons).toHaveLength(1))
+		expect(connectAddon).toHaveBeenCalled()
+		expect(setSecret).toHaveBeenCalledWith(expect.stringMatching(/^addon:/), 'my-token')
+		expect(await screen.findByText('Connected')).toBeTruthy()
+		expect(
+			await screen.findByText(/1 tool to read, 1 tool to change things after asking you/),
+		).toBeTruthy()
+	})
+
+	it('keeps nothing when the token is refused, and says so plainly', async () => {
+		const deleteSecret = vi.fn(async () => {})
+		const { saved } = open({
+			deleteSecret,
+			connectAddon: async () => {
+				throw new Error('Error POSTing to endpoint (HTTP 401)')
+			},
+		})
+		await toConnectors()
+		await userEvent.click(await screen.findByRole('button', { name: 'Connect Apify' }))
+		await userEvent.type(screen.getByLabelText(/Paste your token/), 'bad')
+		await userEvent.click(screen.getByRole('button', { name: 'Connect' }))
+		expect((await screen.findByRole('alert')).textContent).toContain('token was not accepted')
+		expect(saved).toEqual([])
+		expect(deleteSecret).toHaveBeenCalled()
+		expect(screen.getByLabelText(/Paste your token/)).toBeTruthy()
+	})
+
+	const connected = {
+		id: 'a',
+		name: 'Grant search',
+		connection: { kind: 'http' as const, url: 'https://x.example' },
+		enabled: true,
+		allowDestructive: false,
+	}
+
+	it('shows connectors in a grid, and connects one in a dialog that closes when done', async () => {
+		const { saved } = open({})
+		await toConnectors()
+		expect(screen.queryByRole('dialog')).toBeNull()
+		await userEvent.click(await screen.findByRole('button', { name: 'Connect Apify' }))
+		await screen.findByRole('dialog', { name: 'Connect Apify' })
+		await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+		expect(screen.queryByRole('dialog')).toBeNull()
+		expect(saved).toEqual([])
+
+		await userEvent.click(screen.getByRole('button', { name: 'Connect Apify' }))
+		await userEvent.type(screen.getByLabelText(/Paste your token/), 'good')
+		await userEvent.click(screen.getByRole('button', { name: 'Connect' }))
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+		expect(saved.at(-1)?.addons).toHaveLength(1)
+		expect(await screen.findByRole('button', { name: 'Manage Apify' })).toBeTruthy()
+		expect(screen.queryByRole('button', { name: 'Connect Apify' })).toBeNull()
+	})
+
+	it('uses the dialog a host passes down', async () => {
+		const { host } = makeHost([])
+		const Dialog: NgomatePrimitives['Dialog'] = ({ title, children }) => (
+			<section data-host-dialog={title}>{children}</section>
+		)
+		const { container } = render(<NgomateApp host={host} primitives={{ Dialog }} />)
+		await toConnectors()
+		await userEvent.click(await screen.findByRole('button', { name: 'Connect Apify' }))
+		expect(container.querySelector('[data-host-dialog="Connect Apify"]')).not.toBeNull()
+	})
+
+	it('shows what a connector can read, change and delete, and lets a tool be turned off', async () => {
+		const { saved } = open({}, { addons: [connected] })
+		await toConnectors()
+		await screen.findByText('Connected')
+		await userEvent.click(screen.getByRole('button', { name: 'Manage Grant search' }))
+		await screen.findByRole('dialog', { name: 'Grant search' })
+		expect(screen.getByText('It can read')).toBeTruthy()
+		expect(screen.getByText('It can change, after asking you')).toBeTruthy()
+		expect(screen.getByText(/1 tool kept off/)).toBeTruthy()
+		expect(screen.queryByText('Delete page')).toBeNull()
+		await userEvent.click(screen.getByRole('checkbox', { name: /Search grants/ }))
+		expect(saved.at(-1)?.addons[0]?.disabledTools).toEqual(['search_grants'])
+	})
+
+	it('does not start a program just because the screen opened', async () => {
+		const connectAddon = vi.fn(async () => tools)
+		const program = {
+			...connected,
+			connection: { kind: 'command' as const, command: 'tool', args: [] },
+		}
+		open(
+			{ connectAddon, listConversations: async () => [] },
+			{ addons: [{ ...program, enabled: false }] },
+		)
+		await toConnectors()
+		await screen.findByText('Turned off.')
+		expect(connectAddon).not.toHaveBeenCalled()
+	})
+
+	it('turns technical failures into words', () => {
+		expect(connectionProblem(new Error('HTTP 401'))).toContain('token was not accepted')
+		// As a real server's refusal arrives: the status is only in `code`.
+		const refused = Object.assign(new Error('Streamable HTTP error: Error POSTing to endpoint: '), {
+			code: 401,
+		})
+		expect(connectionProblem(refused)).toContain('token was not accepted')
+		expect(connectionProblem(Object.assign(new Error('x'), { code: 404 }))).toContain(
+			'Nothing answered',
+		)
+		expect(connectionProblem(new Error('HTTP 404'))).toContain('Nothing answered')
+		expect(connectionProblem(new TypeError('Load failed'))).toContain('Could not reach')
+	})
+})
+
+describe('moving around while an answer is written', () => {
+	it('keeps writing when the settings are opened, and shows the answer on the way back', async () => {
+		let release: (reply: ModelReply) => void = () => {}
+		const { host, chat, conversations } = makeHost([])
+		chat.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					release = resolve
+				}),
+		)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Write something long')
+		await userEvent.click(await screen.findByRole('button', { name: 'Model' }))
+		const request = chat.mock.calls[0]?.[0] as ChatRequest
+		expect(request.signal?.aborted).toBe(false)
+		release(say('Finished anyway.'))
+		await waitFor(() =>
+			expect([...conversations.values()][0]?.messages.at(-1)?.content).toBe('Finished anyway.'),
+		)
+		await userEvent.click(screen.getByRole('button', { name: 'Write something long' }))
+		expect(await screen.findByText('Finished anyway.')).toBeTruthy()
+	})
+})
+
+describe('command lines for program connectors', () => {
+	it('keeps a quoted path with spaces in one piece', () => {
+		expect(splitCommand('node "/Users/me/My Tools/server.js" --port 3')).toEqual([
+			'node',
+			'/Users/me/My Tools/server.js',
+			'--port',
+			'3',
+		])
+		expect(splitCommand("  tool   'a b'  ")).toEqual(['tool', 'a b'])
+		expect(splitCommand('')).toEqual([])
 	})
 })
 
@@ -385,12 +697,17 @@ describe('textBudget', () => {
 		expect(room.document + room.memory).toBeLessThan(room.input)
 	})
 
-	it('cuts a document to the room there is, and says so', () => {
-		const long = { name: 'a.txt', text: 'x'.repeat(5000), truncated: false }
-		const block = documentBlock(long, 100)
+	it('reads a long document for the request, and says it read only part', () => {
+		const long = {
+			name: 'a.txt',
+			text: `${'Opening. '.repeat(400)}\n\nThe borehole cost EUR 18,400.`,
+			truncated: false,
+		}
+		const block = documentBlock(long, 'What did the borehole cost?', 1500)
 		expect(block.cut).toBe(true)
-		expect(block.text).toContain('Only the first part')
-		expect(block.text.length).toBeLessThan(250)
+		expect(block.text).toContain('EUR 18,400')
+		expect(block.text).toContain('Only the passages closest')
+		expect(documentBlock({ ...long, text: 'Short.' }, 'anything', 1500).cut).toBe(false)
 	})
 })
 

@@ -7,6 +7,7 @@ export {
 	type ButtonProps,
 	type CheckboxProps,
 	type ChipProps,
+	type DialogProps,
 	type InputProps,
 	type NgomatePrimitives,
 	type NgomateTheme,
@@ -14,5 +15,6 @@ export {
 	type TextAreaProps,
 	themeVariables,
 } from './primitives.js'
-export { AddonsPanel, MemoryPanel, ModelPanel } from './panels.js'
+export { AddonsPanel } from './AddonsPanel.js'
+export { MemoryPanel, ModelPanel } from './panels.js'
 export { useChat } from './useChat.js'

@@ -12,7 +12,7 @@ export type TaskFile = {
 	ask: string
 	/** Tools the task may use: `none`, `all`, or a comma-separated list. */
 	tools: 'none' | 'all' | string[]
-	/** `addon`: the task cannot work without a connected add-on, so the host says so instead of asking the model. */
+	/** `addon`: the task cannot work without a connector, so the host says so instead of asking the model. */
 	needs?: 'addon'
 	instructions: string
 }

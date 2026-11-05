@@ -113,6 +113,13 @@ export type RunTaskOptions = {
 	maxOutputTokens?: number
 	/** Text from the host: team rules, the org's name. */
 	context?: string
+	/**
+	 * Sent with this message only and not kept in `messages`: what suits one question can be wrong for the
+	 * next, and a document in the history is read again on every message after it.
+	 */
+	attachments?: string
+	/** Full texts that dates and links may come from, when less than the whole is sent. */
+	sourceTexts?: string[]
 	/** Earlier messages of the conversation, from the last run's `messages`. */
 	history?: ChatMessage[]
 	onEvent?: (event: AgentEvent) => void
@@ -237,7 +244,13 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 
 	const calls: TaskRecord[] = []
 	// What a written date or link may come from: the request, the host's context and successful reads.
-	const sources = [input, options.context ?? '', ...suppliedText(history)]
+	const sources = [
+		input,
+		options.context ?? '',
+		options.attachments ?? '',
+		...(options.sourceTexts ?? []),
+		...suppliedText(history),
+	]
 	const preloaded: string[] = []
 	for (const { tool, args } of profile.preload ?? []) {
 		// Same boundary as a model's call: preload cannot reach a write or a tool outside the profile.
@@ -267,7 +280,13 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		...history,
 		{
 			role: 'user',
-			content: profile.instructionsInRequest ? `${profile.instructions}\n\n${input}` : input,
+			content: [
+				profile.instructionsInRequest ? profile.instructions : '',
+				input,
+				options.attachments ?? '',
+			]
+				.filter(Boolean)
+				.join('\n\n'),
 		},
 	]
 	let promptTokens = 0
@@ -290,7 +309,10 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 			calls,
 			missingTools,
 			unsourcedDates: answer
-				? [...extractDates(answer)].filter((date) => !extractDates(known).has(date))
+				? (() => {
+						const knownDates = extractDates(known)
+						return [...extractDates(answer)].filter((date) => !knownDates.has(date))
+					})()
 				: [],
 			unsourcedLinks: answer ? findUnsourcedLinks(extractLinks(answer), [known]) : [],
 			messages: messages

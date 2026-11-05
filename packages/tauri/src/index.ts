@@ -48,11 +48,13 @@ const models: ModelHost = {
 	cancelDownload: (id) => call('model_cancel_download', { id }),
 	remove: (id) => call('model_remove', { id }),
 	importFile: (id) => call('model_import', { id }),
+	chooseFolder: () => call('model_folder_choose'),
+	resetFolder: () => call('model_folder_reset'),
 	start: (id) => call('runtime_start', { id }),
 	stop: () => call('runtime_stop'),
 }
 
-/** An add-on that is a program on this computer, speaking MCP over its input and output. */
+/** A connector that is a program on this computer, speaking MCP over its input and output. */
 export function programTransport(id: string, command: string, args: string[]): Transport {
 	const transport: Transport = {
 		async start() {

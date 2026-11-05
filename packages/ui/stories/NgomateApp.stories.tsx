@@ -50,7 +50,7 @@ export const AskingToSaveANote: Story = {
 		send(canvasElement, 'Remember that this funder prefers short reports.'),
 }
 
-export const AskingToUseAnAddOn: Story = {
+export const AskingToUseAConnector: Story = {
 	args: {
 		host: createFakeHost({
 			settings: {
@@ -91,7 +91,7 @@ export const ModelSettings: Story = {
 	},
 }
 
-export const AddOnSettings: Story = {
+export const ConnectorSettings: Story = {
 	args: {
 		host: createFakeHost({
 			settings: {
@@ -116,7 +116,60 @@ export const AddOnSettings: Story = {
 		}),
 	},
 	play: async ({ canvasElement }) => {
-		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Add-ons' }))
+		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Connectors' }))
+	},
+}
+
+export const ConnectorsToStart: Story = {
+	args: { host: createFakeHost() },
+	play: async ({ canvasElement }) => {
+		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Connectors' }))
+	},
+}
+
+export const ConnectingAConnector: Story = {
+	args: { host: createFakeHost() },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement)
+		await userEvent.click(await canvas.findByRole('button', { name: 'Connectors' }))
+		await userEvent.click(
+			await canvas.findByRole('button', { name: 'Connect Action Network Worldwide' }),
+		)
+	},
+}
+
+export const WrongToken: Story = {
+	args: { host: createFakeHost() },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement)
+		await userEvent.click(await canvas.findByRole('button', { name: 'Connectors' }))
+		await userEvent.click(await canvas.findByRole('button', { name: 'Connect Apify' }))
+		await userEvent.type(await canvas.findByLabelText(/Paste your token/), 'wrong')
+		await userEvent.click(canvas.getByRole('button', { name: 'Connect' }))
+	},
+}
+
+export const ManagingAConnector: Story = {
+	args: {
+		host: createFakeHost({
+			settings: {
+				addons: [
+					{
+						id: 'a',
+						name: 'Grant search',
+						connection: { kind: 'http', url: 'https://tools.example/mcp' },
+						enabled: true,
+						allowDestructive: false,
+						note: 'Bills your account by use.',
+					},
+				],
+			},
+		}),
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement)
+		await userEvent.click(await canvas.findByRole('button', { name: 'Connectors' }))
+		await userEvent.click(await canvas.findByRole('button', { name: 'Manage Grant search' }))
 	},
 }
 

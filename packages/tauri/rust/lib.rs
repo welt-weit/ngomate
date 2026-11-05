@@ -1,5 +1,5 @@
 //! What a desktop host needs and a web page cannot do: run a local model, download it, reach the OS
-//! keychain, read documents the person picks, keep files, and run add-on programs they confirmed.
+//! keychain, read documents the person picks, keep files, and run connector programs they confirmed.
 
 mod addons;
 mod catalog;
@@ -11,10 +11,10 @@ mod store;
 
 use addons::Addons;
 use error::{Error, Result};
-use models::Downloads;
+use models::{Downloads, FolderChange};
 use runtime::{Running, Runtime};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::ipc::Channel;
 use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{AppHandle, Manager, RunEvent, Runtime as TauriRuntime, State};
@@ -27,11 +27,51 @@ fn data_root<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
 }
 
 /// One folder per user, not per app, so two hosts do not each download 5 GB.
+fn shared_dir<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
+    Ok(app.path().data_dir()?.join("NGOmate"))
+}
+
+fn default_models_dir<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
+    Ok(shared_dir(app)?.join("models"))
+}
+
+/// The folder the person chose, kept beside the models so that every host on this computer agrees.
+fn chosen_models_dir<R: TauriRuntime>(app: &AppHandle<R>) -> Result<Option<PathBuf>> {
+    let text = std::fs::read_to_string(shared_dir(app)?.join("model-folder.txt")).ok();
+    Ok(text.map(|path| PathBuf::from(path.trim())).filter(|path| path.is_absolute()))
+}
+
+fn choose_models_dir<R: TauriRuntime>(app: &AppHandle<R>, folder: Option<&Path>) -> Result<()> {
+    let record = shared_dir(app)?.join("model-folder.txt");
+    std::fs::create_dir_all(shared_dir(app)?)?;
+    match folder {
+        Some(path) => std::fs::write(record, path.to_string_lossy().as_bytes())?,
+        None => {
+            let _ = std::fs::remove_file(record);
+        }
+    }
+    Ok(())
+}
+
 fn models_dir<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
     if let Ok(path) = std::env::var("NGOMATE_MODELS_DIR") {
         return Ok(PathBuf::from(path));
     }
-    Ok(app.path().data_dir()?.join("NGOmate").join("models"))
+    Ok(chosen_models_dir(app)?.map_or(default_models_dir(app)?, |path| path))
+}
+
+/// Creating a missing folder on a drive that is unplugged would make an empty one in its place, and the
+/// models would look as if they had never been downloaded.
+fn usable_models_dir<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
+    let dir = models_dir(app)?;
+    if !dir.exists() && chosen_models_dir(app)?.as_deref() == Some(dir.as_path()) {
+        return Err(Error::msg(format!(
+            "The model folder {} is not available. Connect its drive, or choose another folder under Model.",
+            dir.display()
+        )));
+    }
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 fn model(id: &str) -> Result<&'static catalog::Model> {
@@ -119,6 +159,9 @@ struct ModelInfo {
     free_ram_gb: f64,
     free_disk_bytes: u64,
     running_id: Option<String>,
+    folder: String,
+    folder_available: bool,
+    folder_is_default: bool,
 }
 
 fn total_ram_gb(system: &sysinfo::System) -> u64 {
@@ -128,7 +171,7 @@ fn total_ram_gb(system: &sysinfo::System) -> u64 {
 #[tauri::command]
 fn model_info<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>) -> Result<ModelInfo> {
     let dir = models_dir(&app)?;
-    std::fs::create_dir_all(&dir)?;
+    let folder_available = usable_models_dir(&app).is_ok();
     let mut system = sysinfo::System::new();
     system.refresh_memory();
     Ok(ModelInfo {
@@ -137,6 +180,9 @@ fn model_info<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>) -
         free_ram_gb: models::free_ram_gb(system.total_memory(), system.used_memory(), system.available_memory()),
         free_disk_bytes: models::free_disk_bytes(&dir),
         running_id: runtime.running_id(),
+        folder: dir.to_string_lossy().into_owned(),
+        folder_available,
+        folder_is_default: chosen_models_dir(&app)?.is_none(),
     })
 }
 
@@ -148,7 +194,8 @@ async fn model_download<R: TauriRuntime>(
     on_progress: Channel<models::Progress>,
 ) -> Result<()> {
     let entry = model(&id)?;
-    let dir = models_dir(&app)?;
+    app.state::<FolderChange>().check()?;
+    let dir = usable_models_dir(&app)?;
     models::download(&dir, &downloads, entry, entry.url, move |progress| {
         let _ = on_progress.send(progress);
     })
@@ -165,6 +212,7 @@ async fn model_remove<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Run
     if runtime.running_id().as_deref() == Some(id.as_str()) {
         runtime.stop();
     }
+    app.state::<FolderChange>().check()?;
     models::remove(&models_dir(&app)?, model(&id)?).await
 }
 
@@ -172,15 +220,80 @@ async fn model_remove<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Run
 async fn model_import<R: TauriRuntime>(app: AppHandle<R>, id: String) -> Result<bool> {
     let picked = app.dialog().file().add_filter("Model file", &["gguf"]).blocking_pick_file();
     let Some(path) = picked.and_then(|file| file.into_path().ok()) else { return Ok(false) };
-    models::import(&models_dir(&app)?, model(&id)?, &path).await?;
+    app.state::<FolderChange>().check()?;
+    models::import(&usable_models_dir(&app)?, model(&id)?, &path).await?;
+    Ok(true)
+}
+
+/// The running model holds its file open, and a download is writing one, so neither can be mid-way.
+async fn switch_models_folder<R: TauriRuntime>(
+    app: &AppHandle<R>,
+    runtime: &Runtime,
+    downloads: &Downloads,
+    target: Option<PathBuf>,
+) -> Result<()> {
+    if downloads.any_active() {
+        return Err(Error::msg("Pause the download first."));
+    }
+    let change = app.state::<FolderChange>();
+    let _held = change.begin()?;
+    if std::env::var("NGOMATE_MODELS_DIR").is_ok() {
+        return Err(Error::msg("The model folder is set by NGOMATE_MODELS_DIR."));
+    }
+    let from = models_dir(app)?;
+    let to = match &target {
+        Some(path) => path.clone(),
+        None => default_models_dir(app)?,
+    };
+    if from == to {
+        return Ok(());
+    }
+    if from.exists() && models::has_models(&from) {
+        let shown = format!("Move your models to {}? Until it finishes, the app cannot use them. If you leave them, they stay where they are and this folder starts empty.", to.display());
+        let moving = app
+            .dialog()
+            .message(shown)
+            .title("Move your models?")
+            .buttons(MessageDialogButtons::OkCancelCustom("Move them".to_string(), "Leave them".to_string()))
+            .blocking_show();
+        // Only now: the model holds its file open, and this can be a long way into an answer.
+        runtime.stop();
+        if moving {
+            models::move_folder(&from, &to).await?;
+        }
+    }
+    runtime.stop();
+    tokio::fs::create_dir_all(&to).await?;
+    choose_models_dir(app, target.as_deref())
+}
+
+#[tauri::command]
+async fn model_folder_choose<R: TauriRuntime>(
+    app: AppHandle<R>,
+    runtime: State<'_, Runtime>,
+    downloads: State<'_, Downloads>,
+) -> Result<bool> {
+    let picked = app.dialog().file().blocking_pick_folder();
+    let Some(path) = picked.and_then(|folder| folder.into_path().ok()) else { return Ok(false) };
+    switch_models_folder(&app, &runtime, &downloads, Some(path)).await?;
     Ok(true)
 }
 
 #[tauri::command]
+async fn model_folder_reset<R: TauriRuntime>(
+    app: AppHandle<R>,
+    runtime: State<'_, Runtime>,
+    downloads: State<'_, Downloads>,
+) -> Result<()> {
+    switch_models_folder(&app, &runtime, &downloads, None).await
+}
+
+#[tauri::command]
 async fn runtime_start<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>, id: String) -> Result<Running> {
+    app.state::<FolderChange>().check()?;
     let entry = model(&id)?;
     let server = runtime::find_server(app.path().resource_dir().ok())?;
-    let path = models::installed_path(&models_dir(&app)?, entry);
+    let path = models::installed_path(&usable_models_dir(&app)?, entry);
     let mut system = sysinfo::System::new();
     system.refresh_memory();
     runtime.start(&server, &id, &path, runtime::context_for_ram(total_ram_gb(&system))).await
@@ -208,7 +321,7 @@ async fn addon_start<R: TauriRuntime>(
         let shown = std::iter::once(command.as_str()).chain(args.iter().map(String::as_str)).collect::<Vec<_>>().join(" ");
         let allowed = app
             .dialog()
-            .message(format!("An add-on wants to run this program on your computer, with your permissions:\n\n{shown}\n\nOnly allow it if you trust it."))
+            .message(format!("A connector wants to run this program on your computer, with your permissions:\n\n{shown}\n\nOnly allow it if you trust it."))
             .title("Run this program?")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom("Run it".to_string(), "Don't run".to_string()))
@@ -262,6 +375,8 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             model_cancel_download,
             model_remove,
             model_import,
+            model_folder_choose,
+            model_folder_reset,
             runtime_start,
             runtime_stop,
             addon_start,
@@ -271,6 +386,7 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
         .setup(|app, _api| {
             app.manage(Runtime::default());
             app.manage(Downloads::default());
+            app.manage(FolderChange::default());
             app.manage(Addons::default());
             Ok(())
         })

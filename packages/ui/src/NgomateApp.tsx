@@ -1,9 +1,10 @@
 import type { PromptDefinition, TaskFile } from '@ngomate/core'
 import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react'
+import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatStart } from './Chat.js'
 import { makeId } from './format.js'
 import { DEFAULT_SETTINGS, type NgomateHost, type Settings } from './host.js'
-import { AddonsPanel, MemoryPanel, ModelPanel } from './panels.js'
+import { MemoryPanel, ModelPanel } from './panels.js'
 import {
 	DEFAULT_PRIMITIVES,
 	type NgomatePrimitives,
@@ -116,7 +117,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	)
 
 	const addons = settings?.addons
-	// biome-ignore lint/correctness/useExhaustiveDependencies: asks again when add-ons change
+	// biome-ignore lint/correctness/useExhaustiveDependencies: asks again when connectors change
 	useEffect(() => {
 		const enabled = addons?.filter((addon) => addon.enabled) ?? []
 		if (!enabled.length) {
@@ -275,7 +276,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 
 				<div className="ngm-side-bottom">
 					{nav('model', 'Model')}
-					{nav('addons', 'Add-ons')}
+					{nav('addons', 'Connectors')}
 					{nav('memory', 'Memory')}
 				</div>
 			</aside>
@@ -291,7 +292,8 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						}}
 					/>
 				)}
-				{view === 'chat' && (
+				{/* Stays on the page behind the settings, so opening them does not stop an answer being written. */}
+				<div className="ngm-chat-holder" hidden={view !== 'chat'}>
 					<Chat
 						key={conversationId}
 						deps={deps}
@@ -299,7 +301,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						start={start}
 						onStarted={clearStart}
 					/>
-				)}
+				</div>
 				{view === 'model' && (
 					<ModelPanel host={host} settings={settings} onChange={updateSettings} />
 				)}

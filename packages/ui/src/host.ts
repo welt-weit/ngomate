@@ -20,6 +20,11 @@ export type ModelInfo = {
 	freeRamGb: number
 	freeDiskBytes: number
 	runningId: string | null
+	/** Where models are kept. */
+	folder: string
+	/** False when the chosen folder is on a drive that is not connected. */
+	folderAvailable: boolean
+	folderIsDefault: boolean
 }
 
 export type DownloadProgress = {
@@ -38,6 +43,10 @@ export interface ModelHost {
 	/** Installs a model file the person picks, for example from a USB stick. False if they cancel. */
 	importFile(id: string): Promise<boolean>
 	/** Reuses a model already running. `contextTokens` is how much that model can hold at once. */
+	/** Asks for a folder and offers to move the models there. False if the person cancels. */
+	chooseFolder(): Promise<boolean>
+	/** Back to the usual folder, with the same offer. */
+	resetFolder(): Promise<void>
 	start(id: string): Promise<{ baseUrl: string; apiKey: string; contextTokens: number }>
 	stop(): Promise<void>
 }
@@ -76,6 +85,8 @@ export type Conversation = {
 	title: string
 	updatedAt: string
 	messages: ChatMessage[]
+	/** Attached documents, in full. Each message reads again what it needs from them. */
+	documents?: PickedDocument[]
 	/** What to show beside an answer, keyed by the answer's position in `messages`. */
 	notices: Record<number, AnswerNotice>
 }
@@ -87,6 +98,10 @@ export type AnswerNotice = {
 	stopped: string | null
 	/** The conversation had grown too long, so the model did not see its beginning. */
 	earlierLeftOut?: boolean
+	/** Documents only partly read for this answer. */
+	partlyRead?: string[]
+	/** Files too long to read to the end, so part of them was not even searched. */
+	neverRead?: string[]
 	/** The answer reached the length limit. */
 	cutOff?: boolean
 	/** Tools relevant to the request that there was no room to offer. */

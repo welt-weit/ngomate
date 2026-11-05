@@ -13,6 +13,7 @@ import {
 	filterToolSource,
 	fitHistory,
 	isDestructiveTool,
+	readDocument,
 	runTask,
 	taskFileToProfile,
 } from '@ngomate/core'
@@ -49,7 +50,7 @@ const CHAT_PROFILE: TaskProfile = {
 	id: 'chat',
 	instructions:
 		'You help the staff of a nonprofit organization with their back-office work. Use the tools only when ' +
-		'they are needed. When writing from material the person gave you, use only the facts in it, and say what is missing.',
+		'they are needed. Use only the facts in material the person gave you. If what they asked is not in it, say so.',
 	readTools: [],
 	writeTools: [],
 	allTools: true,
@@ -66,28 +67,37 @@ export function makeTitle(text: string): string {
 	return line.length > 60 ? `${line.slice(0, 57)}…` : line || 'New conversation'
 }
 
-/** The document as text for the model. The person is told when only part of it could be read. */
+/** For a question, the matching passages are enough: more costs time and tokens and did not answer better. */
+const QUESTION_SHARE = 0.3
+
+/** One document as the model gets it for this request, and whether part of it was left out. */
 export function documentBlock(
 	document: PickedDocument,
+	request: string,
 	maxChars = textBudget().document,
 ): { text: string; cut: boolean } {
-	const cut = document.truncated || document.text.length > maxChars
-	const body = document.text.slice(0, maxChars)
-	const note = cut ? '\n[Only the first part of this document is included.]' : ''
-	return { text: `Document "${document.name}":\n"""\n${body}\n"""${note}`, cut }
+	const read = readDocument(document.text, request, maxChars)
+	const cut = document.truncated || read.mode !== 'whole'
+	const notes = {
+		whole: '',
+		relevant:
+			'[Only the passages closest to the request are included. There is more in the document.]',
+		overview: '[Only the opening of each part is included. There is more in the document.]',
+	}
+	const note = [
+		notes[read.mode],
+		document.truncated ? '[The end of this file could not be read at all.]' : '',
+	]
+		.filter(Boolean)
+		.join(' ')
+	return { text: `Document "${document.name}":\n"""\n${read.text}\n"""\n${note}`.trim(), cut }
 }
 
-/** One message from what the person gave, with the room for documents shared between them. */
-function joinInput(
-	promptText: string | undefined,
-	text: string,
-	documents: PickedDocument[],
-	documentChars: number,
-): string {
-	const each = Math.floor(documentChars / Math.max(1, documents.length))
-	return [promptText, text, ...documents.map((document) => documentBlock(document, each).text)]
-		.filter(Boolean)
-		.join('\n\n')
+/** A short follow-up like "and why?" is about what was just discussed, so that helps choose the passages. */
+function passageQuery(request: string, messages: ChatMessage[]): string {
+	if (request.trim().split(/\s+/).length >= 4) return request
+	const previous = [...messages].reverse().find((message) => message.role === 'user')
+	return `${request} ${previous?.content ?? ''}`
 }
 
 export function newConversation(id: string): Conversation {
@@ -165,6 +175,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	const [problems, setProblems] = useState<string[]>([])
 	const [pendingWrite, setPendingWrite] = useState<PendingWrite | null>(null)
 	const [startingModel, setStartingModel] = useState(false)
+	const [readingDocument, setReadingDocument] = useState(false)
 	const [budget, setBudget] = useState(() => textBudget())
 	const abort = useRef<AbortController | null>(null)
 
@@ -194,7 +205,18 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	const send = useCallback(
 		async (text: string, options: SendOptions = {}) => {
 			const { task, documents = [], prompt } = options
-			const input = joinInput(prompt?.text, text, documents, textBudget().document)
+			const request = [prompt?.text, text].filter(Boolean).join('\n\n')
+			const named = documents.length
+				? `[Attached: ${documents.map((document) => document.name).join(', ')}]`
+				: ''
+			// What is kept and shown. The documents themselves go with each message, as far as it needs them.
+			const input = [request, named].filter(Boolean).join('\n\n')
+			// The same file attached twice would only divide the room between two copies.
+			const allDocuments = [...(conversation.documents ?? []), ...documents].filter(
+				(document, index, all) =>
+					all.findIndex((other) => other.name === document.name && other.text === document.text) ===
+					index,
+			)
 			if (!input.trim()) return
 			// Checked here and not left to the model, which may answer from memory with calls that do not exist.
 			if (
@@ -202,7 +224,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				!depsRef.current.settings.addons.some((addon) => addon.enabled)
 			) {
 				setError(
-					`${task.title} needs a connected tool. Add one under Add-ons, such as a search service or Action Network Worldwide.`,
+					`${task.title} needs a connected tool. Add one under Connectors, such as a search service or Action Network Worldwide.`,
 				)
 				return
 			}
@@ -226,11 +248,17 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 			}
 			const title = conversation.messages.length
 				? conversation.title
-				: makeTitle(prompt?.title ?? task?.title ?? text)
+				: makeTitle(prompt?.title ?? task?.title ?? (text || documents[0]?.name || ''))
 			const asked = [...conversation.messages, { role: 'user' as const, content: input }]
 			try {
 				// Saved before anything can fail, because the composer has already been cleared.
-				await save({ ...conversation, title, updatedAt: new Date().toISOString(), messages: asked })
+				await save({
+					...conversation,
+					title,
+					updatedAt: new Date().toISOString(),
+					messages: asked,
+					documents: allDocuments,
+				})
 
 				setStartingModel(true)
 				const { client: model, contextTokens } = await depsRef.current
@@ -238,8 +266,15 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					.finally(() => setStartingModel(false))
 				const room = textBudget(contextTokens)
 				setBudget(room)
-				// What the person sees was cut before the model's size was known. This is cut to fit it.
-				const fitted = joinInput(prompt?.text, text, documents, room.document)
+				// A draft needs every fact it can get. A question needs the passages that answer it.
+				const share = task?.tools === 'none' ? 1 : QUESTION_SHARE
+				const each = Math.floor((room.document * share) / Math.max(1, allDocuments.length))
+				const blocks = allDocuments.map((document) => ({
+					name: document.name,
+					...documentBlock(document, passageQuery(request, conversation.messages), each),
+					truncated: document.truncated,
+				}))
+				const attachments = blocks.map((block) => block.text).join('\n\n')
 				const seen = new Set<string>()
 				// A ready-made task gets notes as context, not as tools that distract a small model from the job.
 				tools = await connectTools(host, depsRef.current.settings.addons, !task, (name) => {
@@ -269,14 +304,18 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					.join('\n\n')
 				const history: ChatMessage[] = fitHistory(
 					conversation.messages,
-					Math.max(0, room.input - room.tools - fitted.length - context.length),
+					Math.max(0, room.input - room.tools - input.length - attachments.length - context.length),
 				)
 
+				// Nothing appears until the model has read it, which on a long document is most of the wait.
+				setReadingDocument(allDocuments.length > 0)
 				const run = await runTask({
 					model,
 					tools,
 					profile: task ? taskFileToProfile(task) : CHAT_PROFILE,
-					input: fitted,
+					input,
+					attachments,
+					sourceTexts: allDocuments.map((document) => document.text),
 					context,
 					history,
 					maxToolResultChars: room.toolResult,
@@ -286,12 +325,14 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					confirmWrite,
 					signal: controller.signal,
 					onText: (piece) => {
+						setReadingDocument(false)
 						written += piece
 						flushTimer ??= setTimeout(flush, 60)
 					},
 					onEvent: (event) => {
 						if (event.type === 'tool_call') {
 							// A new step starts, so what was shown belongs to the step before.
+							setReadingDocument(false)
 							written = ''
 							if (flushTimer) clearTimeout(flushTimer)
 							flushTimer = null
@@ -321,6 +362,8 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						checkFigures: Boolean(task) && task?.tools === 'none',
 						stopped: STOPPED[run.status] ?? null,
 						earlierLeftOut: history.length < conversation.messages.length,
+						partlyRead: blocks.filter((block) => block.cut).map((block) => block.name),
+						neverRead: blocks.filter((block) => block.truncated).map((block) => block.name),
 						cutOff: run.cutOff,
 						toolsDidNotFit: run.toolsDidNotFit,
 					}
@@ -334,11 +377,13 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					updatedAt: new Date().toISOString(),
 					messages,
 					notices,
+					documents: allDocuments,
 				})
 			} catch (err) {
 				setError(err instanceof Error ? err.message : String(err))
 			} finally {
 				if (flushTimer) clearTimeout(flushTimer)
+				setReadingDocument(false)
 				await tools?.close().catch(() => {})
 				depsRef.current.onBusyChange?.(false)
 				setStreaming('')
@@ -352,17 +397,29 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 
 	const stop = useCallback(() => abort.current?.abort(), [])
 
+	/** Takes a document out of the conversation, so it is not sent with any later message. */
+	const removeDocument = useCallback(
+		(index: number) =>
+			save({
+				...conversation,
+				documents: conversation.documents?.filter((_, at) => at !== index),
+			}),
+		[conversation, save],
+	)
+
 	return {
 		conversation,
 		streaming,
 		busy,
 		activity,
 		startingModel,
+		readingDocument,
 		documentLimit: budget.document,
 		error,
 		problems,
 		pendingWrite,
 		send,
 		stop,
+		removeDocument,
 	}
 }

@@ -116,6 +116,9 @@ export function fakeModels(installed: string[] = ['qwen3-8b-q4']): ModelHost {
 			freeRamGb: 3.2,
 			freeDiskBytes: 80_000_000_000,
 			runningId: null,
+			folder: '/Users/example/Library/Application Support/NGOmate/models',
+			folderAvailable: true,
+			folderIsDefault: true,
 		}),
 		download: async (id, onProgress) => {
 			for (let received = 0; received <= 5; received++) {
@@ -133,6 +136,8 @@ export function fakeModels(installed: string[] = ['qwen3-8b-q4']): ModelHost {
 		cancelDownload: async () => {},
 		remove: async () => {},
 		importFile: async () => false,
+		chooseFolder: async () => false,
+		resetFolder: async () => {},
 		start: async () => ({ baseUrl: 'http://fake', apiKey: 'fake', contextTokens: 16384 }),
 		stop: async () => {},
 	}
@@ -182,6 +187,8 @@ export type FakeHostOptions = {
 
 export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 	const replies = [...(options.replies ?? [])]
+	// A token of `wrong` is refused, to show what that looks like.
+	const secrets = new Map<string, string>()
 	const conversations = new Map((options.conversations ?? []).map((item) => [item.id, item]))
 	let settings: Settings = {
 		...DEFAULT_SETTINGS,
@@ -219,9 +226,13 @@ export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 				return reply
 			},
 		}),
-		connectAddon: async () => fakeAddon,
-		getSecret: async () => null,
-		setSecret: async () => {},
-		deleteSecret: async () => {},
+		connectAddon: async (addon) => {
+			if (secrets.get(`addon:${addon.id}`) === 'wrong')
+				throw new Error('Error POSTing to endpoint (HTTP 401)')
+			return fakeAddon
+		},
+		getSecret: async (name) => secrets.get(name) ?? null,
+		setSecret: async (name, value) => void secrets.set(name, value),
+		deleteSecret: async (name) => void secrets.delete(name),
 	}
 }

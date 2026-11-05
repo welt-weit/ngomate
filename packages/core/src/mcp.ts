@@ -44,7 +44,7 @@ async function httpTransport(options: McpToolSourceOptions): Promise<Transport> 
 
 export async function connectMcpToolSource(options: McpToolSourceOptions): Promise<ToolSource> {
 	const transport = options.transport ?? (await httpTransport(options))
-	// Loaded on first use: someone with no add-ons should not spend memory on the protocol library.
+	// Loaded on first use: someone with no connectors should not spend memory on the protocol library.
 	const [{ Client }, { CfWorkerJsonSchemaValidator }] = await Promise.all([
 		import('@modelcontextprotocol/sdk/client/index.js'),
 		import('@modelcontextprotocol/sdk/validation/cfworker'),
@@ -57,7 +57,7 @@ export async function connectMcpToolSource(options: McpToolSourceOptions): Promi
 	try {
 		await client.connect(transport)
 	} catch (err) {
-		// A program add-on is already running by now, and nothing else would stop it.
+		// A program connector is already running by now, and nothing else would stop it.
 		await transport.close().catch(() => {})
 		throw err
 	}

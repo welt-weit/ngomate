@@ -12,7 +12,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AnswerNotice, NgomateHost, PickedDocument } from './host.js'
 import { usePrimitives } from './primitives.js'
-import { type ChatDeps, type PendingWrite, documentBlock, useChat } from './useChat.js'
+import { type ChatDeps, type PendingWrite, useChat } from './useChat.js'
 
 function WriteConfirmation({ request }: { request: PendingWrite }) {
 	const { Button } = usePrimitives()
@@ -48,7 +48,19 @@ function Notice({ notice }: { notice: AnswerNotice }) {
 			{(notice.toolsDidNotFit?.length ?? 0) > 0 && (
 				<p>
 					There was no room to offer these tools with this message:{' '}
-					{notice.toolsDidNotFit?.join(', ')}. Turning off others under Add-ons makes room.
+					{notice.toolsDidNotFit?.join(', ')}. Turning off others under Connectors makes room.
+				</p>
+			)}
+			{(notice.neverRead?.length ?? 0) > 0 && (
+				<p>
+					{notice.neverRead?.join(', ')} is too long to read to the end, so its last part was not
+					searched at all.
+				</p>
+			)}
+			{(notice.partlyRead?.length ?? 0) > 0 && (
+				<p>
+					Read only part of {notice.partlyRead?.join(', ')}, the part closest to your request. If
+					something seems missing, ask about it directly.
 				</p>
 			)}
 			{notice.earlierLeftOut && (
@@ -212,7 +224,7 @@ export function Chat({
 					<div className="ngm-empty">
 						<h2>What are we working on?</h2>
 						<p className="ngm-muted">
-							Everything stays on this computer unless you connect an add-on. Attach a document or
+							Everything stays on this computer unless you add a connector. Attach a document or
 							pick a ready-made task to start.
 						</p>
 					</div>
@@ -241,9 +253,11 @@ export function Chat({
 					<output className="ngm-tool-line ngm-working">
 						{chat.startingModel
 							? 'Starting the model. This can take a minute…'
-							: chat.activity
-								? `Using ${chat.activity}…`
-								: 'Thinking…'}
+							: chat.readingDocument
+								? 'Reading your document. A long one can take a minute…'
+								: chat.activity
+									? `Using ${chat.activity}…`
+									: 'Thinking…'}
 					</output>
 				)}
 				{chat.pendingWrite && <WriteConfirmation request={chat.pendingWrite} />}
@@ -283,6 +297,21 @@ export function Chat({
 						</Button>
 					</div>
 				)}
+				{chat.conversation.documents?.map((document, index) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: two files can share a name
+					<div className="ngm-chip-line" key={index}>
+						<Chip>{document.name}</Chip>
+						<Button
+							variant="quiet"
+							aria-label={`Stop using ${document.name}`}
+							disabled={chat.busy}
+							onClick={() => chat.removeDocument(index)}
+						>
+							Stop using
+						</Button>
+						<span className="ngm-muted">Read again with each message in this conversation.</span>
+					</div>
+				))}
 				{documents.map((document, index) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: two files can share a name
 					<div className="ngm-chip-line" key={index}>
@@ -293,8 +322,14 @@ export function Chat({
 						>
 							Remove
 						</Button>
-						{documentBlock(document, Math.floor(chat.documentLimit / documents.length)).cut && (
-							<span className="ngm-muted">Too long: only the first part will be read.</span>
+						{document.truncated ? (
+							<span className="ngm-muted">
+								Very long: only the first part of the file can be read.
+							</span>
+						) : (
+							document.text.length > chat.documentLimit && (
+								<span className="ngm-muted">Long: it reads the parts closest to each message.</span>
+							)
 						)}
 					</div>
 				))}
