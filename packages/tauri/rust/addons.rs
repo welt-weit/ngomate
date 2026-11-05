@@ -69,6 +69,7 @@ impl Addons {
         let mut child = process
             .spawn()
             .map_err(|err| Error::msg(format!("Could not start {command}: {err}")))?;
+        crate::guard::end_with_app(&child);
         let stdin = child.stdin.take().ok_or_else(|| Error::msg("The program has no input."))?;
         let stdout = child.stdout.take().ok_or_else(|| Error::msg("The program has no output."))?;
         tokio::spawn(async move {

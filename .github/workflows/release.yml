@@ -1,0 +1,179 @@
+name: Release
+
+# Builds the installers into a DRAFT release. Nothing is public until someone publishes the draft.
+# Signing switches itself on per system once its secrets exist; until then that system's build is unsigned.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# One run per version, so starting it twice cannot make two drafts.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each on its own kind of machine: the bundled model runtime is fetched for the machine it builds on.
+        include:
+          - os: macos-latest
+            name: macOS (Apple silicon)
+          - os: macos-15-intel
+            name: macOS (Intel)
+          - os: windows-latest
+            name: Windows
+          # The oldest supported Ubuntu, so the Linux builds run on older systems too.
+          - os: ubuntu-22.04
+            name: Linux
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: A pushed tag must match the app's version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match the app version ${version}. Set the version in apps/desktop/src-tauri/tauri.conf.json first."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn build
+      # Fetched before the app is built, so it can be signed; the build then finds it in place.
+      - run: yarn workspace @ngomate/desktop runtime
+
+      # An exact version, so a release never picks up a new compiler unnoticed.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Install the Linux libraries Tauri builds against
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxdo-dev patchelf pkg-config
+
+      # Notarization refuses an app with any unsigned program inside, and Tauri signs only its own. So the
+      # bundled model server and its libraries are signed here first, with the same Developer ID.
+      - name: Sign for macOS, when it is set up
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          ID: ${{ secrets.APPLE_ID }}
+          PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$CERTIFICATE" ]; then
+            echo "No Apple signing secrets, so this Mac build is unsigned."
+            exit 0
+          fi
+          for name in CERTIFICATE_PASSWORD SIGNING_IDENTITY ID PASSWORD TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::APPLE_CERTIFICATE is set but APPLE_${name} is not."
+              exit 1
+            fi
+          done
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          for file in apps/desktop/src-tauri/runtime/*; do
+            case "$file" in
+              *.dylib|*/llama-server)
+                codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$file" ;;
+            esac
+          done
+          # The certificate is in the keychain now, so Tauri needs only the name and the notarization login.
+          {
+            echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY"
+            echo "APPLE_ID=$ID"
+            echo "APPLE_PASSWORD=$PASSWORD"
+            echo "APPLE_TEAM_ID=$TEAM_ID"
+          } >> "$GITHUB_ENV"
+
+      # Azure Artifact Signing. The account, profile and endpoint are repository variables, not secrets.
+      - name: Sign for Windows, when it is set up
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          if [ -z "$AZURE_CLIENT_ID" ]; then
+            echo "No Windows signing secrets, so this Windows build is unsigned."
+            exit 0
+          fi
+          for name in AZURE_CLIENT_SECRET AZURE_TENANT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::AZURE_CLIENT_ID is set but the secret ${name} is not."
+              exit 1
+            fi
+          done
+          for name in ENDPOINT ACCOUNT PROFILE; do
+            if [ -z "${!name}" ]; then
+              echo "::error::AZURE_CLIENT_ID is set but the variable AZURE_SIGNING_${name} is not."
+              exit 1
+            fi
+          done
+          cargo install artifact-signing-cli --version 0.12.0 --locked
+          sign=(artifact-signing-cli -e "$ENDPOINT" -a "$ACCOUNT" -c "$PROFILE")
+          # The bundled model server and its libraries, which Tauri does not sign.
+          "${sign[@]}" apps/desktop/src-tauri/runtime/*.exe apps/desktop/src-tauri/runtime/*.dll
+          # Tauri signs the app and the installers through this command.
+          node -e '
+            const [endpoint, account, profile] = process.argv.slice(1)
+            const command = `artifact-signing-cli -e ${endpoint} -a ${account} -c ${profile} %1`
+            require("fs").writeFileSync(process.env.RUNNER_TEMP + "/windows-signing.json",
+              JSON.stringify({ bundle: { windows: { signCommand: command } } }))
+          ' "$ENDPOINT" "$ACCOUNT" "$PROFILE"
+          {
+            echo "TAURI_BUILD_ARGS=--config $RUNNER_TEMP/windows-signing.json"
+            echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
+            echo "AZURE_CLIENT_SECRET=$AZURE_CLIENT_SECRET"
+            echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
+          } >> "$GITHUB_ENV"
+
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: yarn tauri
+          args: ${{ env.TAURI_BUILD_ARGS }}
+          # A pushed tag names the release; a run started by hand uses the app's version.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseName: NGOmate __VERSION__
+          releaseBody: A preview build. See the README for what it needs and what is not finished.
+          releaseDraft: true
+          prerelease: true

@@ -71,7 +71,12 @@ try {
 	writeFileSync(file, bytes)
 	const unpacked = join(work, 'unpacked')
 	mkdirSync(unpacked)
-	execFileSync('tar', ['-xf', file, '-C', unpacked])
+	// Windows' own tar opens zip files. The one Git puts first on the path does not.
+	const tar =
+		process.platform === 'win32'
+			? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+			: 'tar'
+	execFileSync(tar, ['-xf', file, '-C', unpacked])
 	const inner = readdirSync(unpacked)
 	const source = inner.length === 1 ? join(unpacked, inner[0]) : unpacked
 	rmSync(target, { recursive: true, force: true })

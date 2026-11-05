@@ -5,6 +5,7 @@ mod addons;
 mod catalog;
 mod documents;
 mod error;
+mod guard;
 mod models;
 mod runtime;
 mod store;

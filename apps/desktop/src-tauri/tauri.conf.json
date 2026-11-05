@@ -39,6 +39,10 @@
 		"resources": ["runtime/**/*"],
 		"macOS": {
 			"minimumSystemVersion": "11.0"
+		},
+		"linux": {
+			"deb": { "depends": ["libvulkan1"] },
+			"rpm": { "depends": ["vulkan-loader"] }
 		}
 	}
 }

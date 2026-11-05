@@ -109,7 +109,7 @@ fn free_port() -> Result<u16> {
 
 /// A crash skips every cleanup, and a model left behind holds gigabytes until the computer restarts. So
 /// a small shell loop stops the server when the app is gone, and ends by itself when the server is.
-/// Windows has no such loop yet.
+/// Windows uses a job object instead, in `guard.rs`.
 #[cfg(unix)]
 const WATCHDOG: &str = r#"while kill -0 "$1" 2>/dev/null && kill -0 "$2" 2>/dev/null; do sleep "$3"; done; kill -0 "$1" 2>/dev/null || kill -9 "$2" 2>/dev/null"#;
 
@@ -231,6 +231,7 @@ impl Runtime {
             .spawn()
             .map_err(|err| Error::msg(format!("Could not start the model runtime: {err}")))?;
         // Before loading, because that is when a model holds the most and a crash is most likely.
+        crate::guard::end_with_app(&child);
         #[cfg(unix)]
         if let Some(server_pid) = child.id() {
             // The model still works without it, so failing to start it is no reason to stop.

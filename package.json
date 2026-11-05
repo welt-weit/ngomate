@@ -18,7 +18,10 @@
 		"typecheck": "yarn workspaces foreach -A run typecheck",
 		"lint": "biome lint ./packages ./apps ./scripts",
 		"test": "vitest run",
-		"ngomate": "yarn workspace @ngomate/cli run ngomate"
+		"ngomate": "yarn workspace @ngomate/cli run ngomate",
+		"bump:patch": "node scripts/bump-version.mjs patch",
+		"bump:minor": "node scripts/bump-version.mjs minor",
+		"bump:major": "node scripts/bump-version.mjs major"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
