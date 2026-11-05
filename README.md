@@ -45,6 +45,7 @@ The first run downloads the pinned [llama.cpp](https://github.com/ggml-org/llama
 | `packages/tauri` | A Tauri plugin: local model runner, downloads, keychain, documents and files. |
 | `packages/cli` | A small command-line host. |
 | `apps/desktop` | The standalone desktop app. |
+| `apps/site` | The website at ngomate.ai, published by hand with the *Publish site* workflow. |
 
 To see every screen without a model or the desktop app, run `yarn storybook` and open http://localhost:6006. It uses made-up data.
 

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>NGOmate: a free AI assistant for NGOs that runs on your own computer</title>
+		<meta
+			name="description"
+			content="NGOmate is a free, open-source AI assistant for the back-office work of NGOs. It runs on an open-weight model on your own computer, with no subscription."
+		/>
+		<meta property="og:title" content="NGOmate" />
+		<meta
+			property="og:description"
+			content="A free, open-source AI assistant for NGO back-office work, running on your own computer."
+		/>
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://ngomate.ai/" />
+		<meta property="og:image" content="https://ngomate.ai/icon.png" />
+		<link rel="canonical" href="https://ngomate.ai/" />
+		<link rel="icon" type="image/png" href="/favicon.png" />
+		<link rel="stylesheet" href="/src/style.css" />
+	</head>
+	<body>
+		<header class="top">
+			<a class="brand" href="/"><img src="/icon.png" alt="" width="32" height="32" />NGOmate</a>
+			<a href="https://github.com/welt-weit/ngomate">GitHub</a>
+		</header>
+
+		<main>
+			<section class="hero">
+				<h1>An AI assistant for NGO back-office work, on your own computer</h1>
+				<p class="lead">
+					NGOmate is free and open source. It runs on an open-weight model on your computer, so there
+					is no subscription to pay, and what you type stays with you unless you connect something
+					else.
+				</p>
+				<div class="actions">
+					<a class="button" href="https://github.com/welt-weit/ngomate">See the code on GitHub</a>
+					<span class="soon">The desktop app is coming soon.</span>
+				</div>
+			</section>
+
+			<section>
+				<h2>Why it exists</h2>
+				<p>
+					Many small organizations cannot pay for an AI subscription for everyone on the team, or do
+					not want their documents on someone else's servers. NGOmate does the everyday work of
+					finding funding, drafting and reporting with a model small enough for an ordinary laptop.
+				</p>
+			</section>
+
+			<section>
+				<h2>What it does</h2>
+				<ul class="features">
+					<li>
+						<h3>Chat with a local model</h3>
+						<p>The model is a separate download. You can also point NGOmate at a model server you run.</p>
+					</li>
+					<li>
+						<h3>Draft from your documents</h3>
+						<p>It reads the PDF, Word and text files you give it and drafts from them.</p>
+					</li>
+					<li>
+						<h3>Memory you can read</h3>
+						<p>
+							Memory is kept as plain Markdown files you can read, edit and delete. It asks before
+							saving anything.
+						</p>
+					</li>
+					<li>
+						<h3>Connect your other tools</h3>
+						<p>
+							Connectors use the open
+							<a href="https://modelcontextprotocol.io">Model Context Protocol</a>. Anything that
+							changes something asks you first.
+						</p>
+					</li>
+					<li>
+						<h3>Ready-made tasks</h3>
+						<p>Find funding opportunities, draft a proposal section, or write an update or report.</p>
+					</li>
+				</ul>
+			</section>
+
+			<section class="note">
+				<h2>Check what it writes</h2>
+				<p>
+					Local models make mistakes, including mixing up real figures. NGOmate flags dates and links
+					it cannot trace to your material or a tool, but you still need to check names and numbers
+					before you use a draft.
+				</p>
+			</section>
+
+			<section>
+				<h2>What it needs</h2>
+				<table>
+					<thead>
+						<tr>
+							<th>Model</th>
+							<th>Download</th>
+							<th>Recommended memory</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Qwen 3 8B, Ministral 3 8B, Granite 4.2 8B</td>
+							<td>about 5 GB</td>
+							<td>12 GB or more</td>
+						</tr>
+						<tr>
+							<td>Qwen 3 4B</td>
+							<td>2.5 GB</td>
+							<td>6 GB or more</td>
+						</tr>
+						<tr>
+							<td>Granite 4.2 3B, with weaker drafts</td>
+							<td>2.2 GB</td>
+							<td>4 GB or more</td>
+						</tr>
+					</tbody>
+				</table>
+				<p class="muted">
+					The app offers the largest model that fits your computer and unloads it after 10 minutes
+					without use. Each model has its own licence, shown before you download it.
+				</p>
+			</section>
+
+			<section>
+				<h2>Built on open standards</h2>
+				<p>
+					Nothing in NGOmate ties you to us. Every part is something you can inspect, replace or take
+					with you.
+				</p>
+				<dl class="standards">
+					<dt>Open-weight models</dt>
+					<dd>
+						Qwen, Ministral and Granite, in the common GGUF format, downloaded from
+						<a href="https://huggingface.co">Hugging Face</a> and pinned to an exact version.
+					</dd>
+					<dt>llama.cpp</dt>
+					<dd>
+						The open <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a> server runs the
+						model on your computer. NGOmate also works with any model server that speaks the chat
+						completions format, such as Ollama.
+					</dd>
+					<dt>Model Context Protocol</dt>
+					<dd>
+						Connectors use the open <a href="https://modelcontextprotocol.io">MCP</a> standard, so
+						any service that offers an MCP server can be connected, not only ones we chose.
+					</dd>
+					<dt>Plain files</dt>
+					<dd>
+						Memory is Markdown in a folder on your computer. You can read it in any text editor, back
+						it up, or move it elsewhere.
+					</dd>
+					<dt>Your system's keychain</dt>
+					<dd>Access tokens for connectors are kept in the operating system's own keychain.</dd>
+					<dt>Open source</dt>
+					<dd>
+						The app is built with <a href="https://tauri.app">Tauri</a>, and all of NGOmate's code is
+						public under the MIT licence.
+					</dd>
+				</dl>
+			</section>
+
+			<section>
+				<h2>Where it stands</h2>
+				<p>
+					NGOmate is early and unreleased, and there are no installers yet. If you are comfortable
+					with developer tools, you can run it from source today. Feedback is welcome as an
+					<a href="https://github.com/welt-weit/ngomate/issues">issue on GitHub</a>.
+				</p>
+			</section>
+
+			<section>
+				<h2>Who is behind it</h2>
+				<p>
+					NGOmate comes from
+					<a href="https://actionnetwork.world">Action Network Worldwide</a>. We build it in the open so that organizations can see exactly what the assistant does with
+					their work.
+				</p>
+				<p class="muted">
+					NGOmate works on its own and needs no account with us. Connecting it to Action Network
+					Worldwide, or to anything else, is your choice.
+				</p>
+			</section>
+		</main>
+
+		<footer>
+			<p>
+				NGOmate is open source under the
+				<a href="https://github.com/welt-weit/ngomate/blob/development/LICENSE">MIT licence</a>.
+				A project of <a href="https://actionnetwork.world">Action Network Worldwide</a> ·
+				<a href="https://actionnetwork.world/imprint">Imprint</a> ·
+				<a href="https://actionnetwork.world/privacy">Privacy</a>
+			</p>
+		</footer>
+	</body>
+</html>

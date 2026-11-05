@@ -755,6 +755,14 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@ngomate/site@workspace:apps/site":
+  version: 0.0.0-use.local
+  resolution: "@ngomate/site@workspace:apps/site"
+  dependencies:
+    vite: "npm:^8.0.0"
+  languageName: unknown
+  linkType: soft
+
 "@ngomate/tauri@workspace:*, @ngomate/tauri@workspace:packages/tauri":
   version: 0.0.0-use.local
   resolution: "@ngomate/tauri@workspace:packages/tauri"
