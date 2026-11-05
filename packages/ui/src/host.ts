@@ -106,6 +106,10 @@ export type AnswerNotice = {
 	cutOff?: boolean
 	/** Tools relevant to the request that there was no room to offer. */
 	toolsDidNotFit?: string[]
+	/** Entries of a connected knowledge base the model was given passages from. */
+	knowledgeEntries?: string[]
+	/** A connected knowledge base did not answer, so this answer was written without it. */
+	knowledgeUnavailable?: boolean
 }
 
 export type PickedDocument = {

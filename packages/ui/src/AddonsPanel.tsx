@@ -1,4 +1,4 @@
-import { type ToolDefinition, isDestructiveTool } from '@ngomate/core'
+import { type ToolDefinition, isDestructiveTool, isKnowledgeTool } from '@ngomate/core'
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { makeId } from './format.js'
 import type { Addon, AddonConnection, NgomateHost, Settings } from './host.js'
@@ -166,6 +166,9 @@ function ConnectedAddon({ addon, host, settings, onChange }: PanelProps & { addo
 	const changing = others.filter((tool) => tool.annotations?.readOnly !== true)
 	const offered = (list: ToolDefinition[]) =>
 		list.filter((tool) => !addon.disabledTools?.includes(tool.name)).length
+	const searchesKnowledge = tools.some(
+		(tool) => isKnowledgeTool(tool) && !addon.disabledTools?.includes(tool.name),
+	)
 
 	const summary =
 		status.state === 'checking'
@@ -255,6 +258,13 @@ function ConnectedAddon({ addon, host, settings, onChange }: PanelProps & { addo
 									Allow these too, still asking first
 								</label>
 							</div>
+						)}
+						{addon.enabled && searchesKnowledge && (
+							<p className="ngm-muted">
+								Each question you ask in chat is also sent to its knowledge search, so answers can
+								draw on it. Your documents are not sent. Turn off the knowledge search tool to stop
+								this.
+							</p>
 						)}
 						{status.state === 'connected' && (
 							<p className="ngm-muted">

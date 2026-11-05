@@ -41,6 +41,7 @@ export function textBudget(contextTokens: number = UNKNOWN_CONTEXT_TOKENS) {
 		document: Math.round(input * 0.6),
 		memory: Math.round(input * 0.1),
 		toolResult: Math.round(input * 0.25),
+		knowledge: Math.round(input * 0.15),
 		tools: Math.round(input * 0.25),
 		output: Math.round(contextTokens / 4),
 	}
@@ -50,7 +51,7 @@ const CHAT_PROFILE: TaskProfile = {
 	id: 'chat',
 	instructions:
 		'You help the staff of a nonprofit organization with their back-office work. Use the tools only when ' +
-		'they are needed. Use only the facts in material the person gave you. If what they asked is not in it, say so.',
+		'they are needed. Use only the facts in material the person gave you or a tool returned. If what they asked is not in it, say so.',
 	readTools: [],
 	writeTools: [],
 	allTools: true,
@@ -97,7 +98,8 @@ export function documentBlock(
 function passageQuery(request: string, messages: ChatMessage[]): string {
 	if (request.trim().split(/\s+/).length >= 4) return request
 	const previous = [...messages].reverse().find((message) => message.role === 'user')
-	return `${request} ${previous?.content ?? ''}`
+	// A file's name is no help in finding a passage, and this also goes to a connected knowledge base.
+	return `${request} ${previous?.content?.replace(/\n*\[Attached: .*\]$/, '') ?? ''}`
 }
 
 export function newConversation(id: string): Conversation {
@@ -302,9 +304,22 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				const context = [`Today is ${new Date().toISOString().slice(0, 10)}.`, memory]
 					.filter(Boolean)
 					.join('\n\n')
+				// Open chat only: a ready-made task has its own material and every token spoken for.
+				const knowledge =
+					!task && text.trim() && depsRef.current.settings.addons.some((addon) => addon.enabled)
+						? { query: passageQuery(text, conversation.messages), maxChars: room.knowledge }
+						: undefined
 				const history: ChatMessage[] = fitHistory(
 					conversation.messages,
-					Math.max(0, room.input - room.tools - input.length - attachments.length - context.length),
+					Math.max(
+						0,
+						room.input -
+							room.tools -
+							input.length -
+							attachments.length -
+							context.length -
+							(knowledge?.maxChars ?? 0),
+					),
 				)
 
 				// Nothing appears until the model has read it, which on a long document is most of the wait.
@@ -315,6 +330,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					profile: task ? taskFileToProfile(task) : CHAT_PROFILE,
 					input,
 					attachments,
+					knowledge,
 					sourceTexts: allDocuments.map((document) => document.text),
 					context,
 					history,
@@ -366,6 +382,8 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						neverRead: blocks.filter((block) => block.truncated).map((block) => block.name),
 						cutOff: run.cutOff,
 						toolsDidNotFit: run.toolsDidNotFit,
+						knowledgeEntries: run.knowledgeEntries,
+						knowledgeUnavailable: run.knowledgeUnavailable,
 					}
 					notices[messages.length - 1] = notice
 				} else if (STOPPED[run.status]) {

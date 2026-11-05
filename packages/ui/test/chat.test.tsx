@@ -443,6 +443,47 @@ describe('chat', () => {
 		expect(names).not.toContain('delete_page')
 	})
 
+	it('looks up the question in a connected knowledge base', async () => {
+		const callTool = vi.fn(async () => ({
+			text: JSON.stringify({
+				passages: [{ text: 'Compost helps.', heading: null, entry: { title: 'Soil guide' } }],
+			}),
+			isError: false,
+		}))
+		const source: ToolSource = {
+			listTools: async () => [
+				{
+					name: 'search_knowledge',
+					description: 'Find',
+					inputSchema: {},
+					annotations: { readOnly: true },
+				},
+			],
+			callTool,
+			close: async () => {},
+		}
+		const addon = {
+			id: 'a',
+			name: 'Wiki',
+			connection: { kind: 'http' as const, url: 'https://x.example' },
+			enabled: true,
+			allowDestructive: false,
+		}
+		const { host } = makeHost(
+			[say('Use compost.')],
+			{ addons: [addon] },
+			{ connectAddon: async () => source },
+		)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('How do we restore soil?')
+		await screen.findByText('Use compost.')
+		expect(callTool).toHaveBeenCalledWith(
+			'search_knowledge',
+			expect.objectContaining({ query: 'How do we restore soil?' }),
+		)
+		expect(await screen.findByText(/Looked up in the knowledge base: Soil guide/)).toBeTruthy()
+	})
+
 	it('does not render model text as HTML', async () => {
 		const { host } = makeHost([
 			say('Hello <img src=x onerror="alert(1)"> world ![a](https://x.example/p.png)'),
@@ -568,6 +609,28 @@ describe('connectors', () => {
 		expect(screen.queryByText('Delete page')).toBeNull()
 		await userEvent.click(screen.getByRole('checkbox', { name: /Search grants/ }))
 		expect(saved.at(-1)?.addons[0]?.disabledTools).toEqual(['search_grants'])
+	})
+
+	it('says that questions go to a knowledge search while it is on', async () => {
+		const withKnowledge: ToolSource = {
+			...tools,
+			listTools: async () => [
+				{
+					name: 'search_knowledge',
+					description: 'Search the knowledge base',
+					inputSchema: {},
+					annotations: { readOnly: true },
+				},
+			],
+		}
+		open({ connectAddon: async () => withKnowledge }, { addons: [connected] })
+		await toConnectors()
+		await screen.findByText('Connected')
+		await userEvent.click(screen.getByRole('button', { name: 'Manage Grant search' }))
+		const notice = /Each question you ask in chat is also sent to its knowledge search/
+		expect(await screen.findByText(notice)).toBeTruthy()
+		await userEvent.click(screen.getByRole('checkbox', { name: /Search knowledge/ }))
+		expect(screen.queryByText(notice)).toBeNull()
 	})
 
 	it('does not start a program just because the screen opened', async () => {

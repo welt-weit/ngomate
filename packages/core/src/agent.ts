@@ -1,4 +1,5 @@
 import { extractDates, findUnsourcedDates } from './dates.js'
+import { type KnowledgeOptions, isKnowledgeTool, lookUpKnowledge } from './knowledge.js'
 import { extractLinks, findUnsourcedLinks } from './links.js'
 import type { ToolResult, ToolSource } from './mcp.js'
 import type { ChatMessage, ModelClient, ToolCall, ToolDefinition } from './model.js'
@@ -90,6 +91,10 @@ export type TaskRun = {
 	completionTokens: number | null
 	/** The conversation so far, to pass back as `history` on the next message. */
 	messages: ChatMessage[]
+	/** Entries of a connected knowledge base whose passages the model was given. */
+	knowledgeEntries: string[]
+	/** A knowledge base did not answer, so this answer was written without it. */
+	knowledgeUnavailable: boolean
 }
 
 export type RunTaskOptions = {
@@ -118,6 +123,11 @@ export type RunTaskOptions = {
 	 * next, and a document in the history is read again on every message after it.
 	 */
 	attachments?: string
+	/**
+	 * Ask any connected knowledge base before the model's first turn, and send what it finds with this
+	 * message only. In code, because a small model does not reliably ask, and each search would take a turn.
+	 */
+	knowledge?: KnowledgeOptions
 	/** Full texts that dates and links may come from, when less than the whole is sent. */
 	sourceTexts?: string[]
 	/** Earlier messages of the conversation, from the last run's `messages`. */
@@ -223,7 +233,11 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 	const startedAt = performance.now()
 
 	const offered = await tools.listTools()
-	const permitted = offered.filter((tool) => kindOf(profile, tool.name, offered))
+	const knowledgeTools = options.knowledge ? offered.filter(isKnowledgeTool) : []
+	// Already asked, so offering it as well would only cost tokens and invite a second search.
+	const permitted = offered.filter(
+		(tool) => kindOf(profile, tool.name, offered) && !knowledgeTools.includes(tool),
+	)
 	const usedBefore = history.flatMap((message) =>
 		message.role === 'assistant' ? (message.toolCalls ?? []).map((call) => call.name) : [],
 	)
@@ -251,6 +265,29 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		...(options.sourceTexts ?? []),
 		...suppliedText(history),
 	]
+	const knowledge = options.knowledge
+		? await (async () => {
+				const args = { query: options.knowledge?.query ?? '' }
+				for (const { name } of knowledgeTools) {
+					onEvent?.({ type: 'tool_call', tool: name, args, kind: 'read' })
+				}
+				const found = await lookUpKnowledge(
+					tools,
+					knowledgeTools,
+					options.knowledge as KnowledgeOptions,
+				)
+				for (const { name } of knowledgeTools) {
+					calls.push({
+						tool: name,
+						args,
+						kind: 'read',
+						outcome: found.unavailable ? 'tool_error' : 'ok',
+					})
+				}
+				return found
+			})()
+		: { text: '', sources: [], entries: [], unavailable: false }
+	sources.push(...knowledge.sources)
 	const preloaded: string[] = []
 	for (const { tool, args } of profile.preload ?? []) {
 		// Same boundary as a model's call: preload cannot reach a write or a tool outside the profile.
@@ -284,6 +321,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 				profile.instructionsInRequest ? profile.instructions : '',
 				input,
 				options.attachments ?? '',
+				knowledge.text,
 			]
 				.filter(Boolean)
 				.join('\n\n'),
@@ -324,6 +362,8 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 			toolsDidNotFit: choice.didNotFit,
 			promptTokens: sawUsage ? promptTokens : null,
 			completionTokens: sawUsage ? completionTokens : null,
+			knowledgeEntries: knowledge.entries,
+			knowledgeUnavailable: knowledge.unavailable,
 		}
 	}
 	const count = (reply: Awaited<ReturnType<ModelClient['chat']>>) => {

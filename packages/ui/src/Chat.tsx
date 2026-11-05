@@ -42,6 +42,12 @@ function Notice({ notice }: { notice: AnswerNotice }) {
 	return (
 		<div className="ngm-notice">
 			{notice.stopped && <p>{notice.stopped}</p>}
+			{(notice.knowledgeEntries?.length ?? 0) > 0 && (
+				<p>Looked up in the knowledge base: {notice.knowledgeEntries?.join(', ')}.</p>
+			)}
+			{notice.knowledgeUnavailable && (
+				<p>The knowledge base did not answer, so this was written without it.</p>
+			)}
 			{notice.cutOff && (
 				<p>This answer reached the length limit and was cut off. Ask it to continue.</p>
 			)}
