@@ -1,7 +1,14 @@
 name: Publish site
 
-# Started by hand: publishing ngomate.ai is a deliberate step, not a side effect of a push.
+# Publishes ngomate.ai whenever the site reaches main: a push or a merged pull request. Work happens on
+# development, so merging into main is the deliberate step. Can also be started by hand.
+# The custom domain is set in the repository's Pages settings; a CNAME file is ignored for this kind of site.
 on:
+  push:
+    branches: [main]
+    paths:
+      - apps/site/**
+      - .github/workflows/site.yml
   workflow_dispatch:
 
 permissions:
