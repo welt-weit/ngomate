@@ -1,13 +1,14 @@
-/* The app's own colors (packages/ui/src/default-theme.css), so the site and the app look related. */
+/* The NGOmate brand colors: teal for the button, ink for text on light and as the dark background, cream
+   for text on dark. Links use a darker teal on light, because the brand teal is too pale for text there. */
 :root {
 	--bg: #ffffff;
-	--panel: #f6f7f8;
-	--line: #dfe2e6;
-	--text: #1b1f24;
-	--muted: #5c6670;
-	--accent: #1f6f5c;
-	--accent-text: #ffffff;
-	--link: #17594a;
+	--panel: #f2fbf7;
+	--line: #d6e9e2;
+	--text: #0f2a2e;
+	--muted: #4d6366;
+	--accent: #4fb89f;
+	--accent-text: #0f2a2e;
+	--link: #1f6f5c;
 	--warn-bg: #fff6e0;
 	--warn-text: #6a4b00;
 	--font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -16,14 +17,14 @@
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--bg: #16191d;
-		--panel: #1f2328;
-		--line: #343a41;
-		--text: #e7eaee;
-		--muted: #a2acb6;
+		--bg: #0f2a2e;
+		--panel: #15363a;
+		--line: #254a4e;
+		--text: #f2fbf7;
+		--muted: #a9c4c0;
 		--accent: #4fb89f;
-		--accent-text: #0d1512;
-		--link: #7fd8c3;
+		--accent-text: #0f2a2e;
+		--link: #86dfc1;
 		--warn-bg: #3a2f12;
 		--warn-text: #f3dc9a;
 	}
@@ -67,6 +68,15 @@ footer {
 	font-weight: 700;
 	font-size: 1.15rem;
 	text-decoration: none;
+}
+
+.brand img {
+	display: block;
+}
+
+.logo {
+	display: block;
+	margin-bottom: 2rem;
 }
 
 section {
