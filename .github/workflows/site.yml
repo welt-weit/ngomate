@@ -1,6 +1,6 @@
 name: Publish site
 
-# Publishes ngomate.ai whenever the site reaches main: a push or a merged pull request. Work happens on
+# Publishes ngomate.org whenever the site reaches main: a push or a merged pull request. Work happens on
 # development, so merging into main is the deliberate step. Can also be started by hand.
 # The custom domain is set in the repository's Pages settings; a CNAME file is ignored for this kind of site.
 on:

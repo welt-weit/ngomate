@@ -9,10 +9,10 @@
 
 [![Check](https://github.com/welt-weit/ngomate/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/welt-weit/ngomate/actions/workflows/check.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f8c7a.svg)](LICENSE)
-[![Website](https://img.shields.io/badge/website-ngomate.ai-0f2a2e.svg)](https://ngomate.ai)
+[![Website](https://img.shields.io/badge/website-ngomate.org-0f2a2e.svg)](https://ngomate.org)
 ![Status: early and unreleased](https://img.shields.io/badge/status-early%20%26%20unreleased-e8a33d.svg)
 
-[Website](https://ngomate.ai) · [Report an issue](https://github.com/welt-weit/ngomate/issues) · [Getting started](#getting-started)
+[Website](https://ngomate.org) · [Report an issue](https://github.com/welt-weit/ngomate/issues) · [Getting started](#getting-started)
 
 </div>
 
@@ -115,7 +115,7 @@ The first run downloads the pinned [llama.cpp](https://github.com/ggml-org/llama
 | [`packages/tauri`](packages/tauri) | A Tauri plugin: local model runner, downloads, keychain, documents and files. |
 | [`packages/cli`](packages/cli) | A small command-line host. |
 | [`apps/desktop`](apps/desktop) | The standalone desktop app. |
-| [`apps/site`](apps/site) | The website at [ngomate.ai](https://ngomate.ai). |
+| [`apps/site`](apps/site) | The website at [ngomate.org](https://ngomate.org). |
 
 ## Development
 
