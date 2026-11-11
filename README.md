@@ -10,9 +10,9 @@
 [![Check](https://github.com/welt-weit/ngomate/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/welt-weit/ngomate/actions/workflows/check.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2f8c7a.svg)](LICENSE)
 [![Website](https://img.shields.io/badge/website-ngomate.org-0f2a2e.svg)](https://ngomate.org)
-![Status: early and unreleased](https://img.shields.io/badge/status-early%20%26%20unreleased-e8a33d.svg)
+![Status: early preview](https://img.shields.io/badge/status-early%20preview-e8a33d.svg)
 
-[Website](https://ngomate.org) · [Report an issue](https://github.com/welt-weit/ngomate/issues) · [Getting started](#getting-started)
+[Download](#download) · [Website](https://ngomate.org) · [Report an issue](https://github.com/welt-weit/ngomate/issues) · [Getting started](#getting-started)
 
 </div>
 
@@ -23,11 +23,26 @@ NGOmate helps the people who run small NGOs with the writing and searching that 
 It does this with an AI model that runs on your own laptop. There is no subscription, no account, and your documents do not go to anyone's servers unless you connect something yourself.
 
 > [!NOTE]
-> NGOmate is early and unreleased. There are no installers yet, and things will change.
+> NGOmate is an early preview, and things will change.
+
+## Download
+
+| System | Installer |
+|---|---|
+| Mac with Apple silicon (M1 or later) | [NGOmate_0.0.1_aarch64.dmg](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_aarch64.dmg) |
+| Mac with Intel | [NGOmate_0.0.1_x64.dmg](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_x64.dmg) |
+| Windows | [NGOmate_0.0.1_x64-setup.exe](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_x64-setup.exe) |
+| Linux | [AppImage](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_amd64.AppImage) · [.deb](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_amd64.deb) · [.rpm](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate-0.0.1-1.x86_64.rpm) |
+
+Every version is on the [releases page](https://github.com/welt-weit/ngomate/releases). The model is a separate download, chosen inside the app.
+
+> [!IMPORTANT]
+> The installers are not signed yet, so your system warns you the first time you open NGOmate. On a Mac, open it once, then choose **Open Anyway** under System Settings → Privacy & Security. On Windows, choose **More info** → **Run anyway** in the SmartScreen message.
 
 ## Table of contents
 
 - [About](#about)
+- [Download](#download)
 - [What you can do with it](#what-you-can-do-with-it)
 - [Features](#features)
 - [Knowledge base](#knowledge-base)
@@ -94,7 +109,7 @@ The app offers the largest model that fits your computer, holds less text at onc
 
 ## Getting started
 
-Until installers are released, NGOmate runs from source. You need [Node](https://nodejs.org) 22.12 or later, [Yarn](https://yarnpkg.com) 4 and [Rust](https://rustup.rs), plus the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your system.
+Most people should use an installer from [Download](#download). To run NGOmate from source instead, you need [Node](https://nodejs.org) 22.12 or later, [Yarn](https://yarnpkg.com) 4 and [Rust](https://rustup.rs), plus the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your system.
 
 ```sh
 git clone https://github.com/welt-weit/ngomate.git

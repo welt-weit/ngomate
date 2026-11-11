@@ -129,6 +129,16 @@ h3 {
 	text-decoration: none;
 }
 
+.button.secondary {
+	background: transparent;
+	color: var(--text);
+	border: 1px solid var(--line);
+}
+
+.soon {
+	margin-top: 0.75rem;
+}
+
 .soon,
 .muted {
 	color: var(--muted);
