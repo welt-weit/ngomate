@@ -1,6 +1,7 @@
 name: Release
 
-# Builds the installers into a DRAFT release. Nothing is public until someone publishes the draft.
+# Builds the installers into a DRAFT release. Nothing is public until someone publishes the draft, and the
+# website's download links follow the newest PUBLISHED release, so publishing one is what updates them.
 # Signing switches itself on per system once its secrets exist; until then that system's build is unsigned.
 on:
   workflow_dispatch:
@@ -23,16 +24,21 @@ jobs:
       fail-fast: false
       matrix:
         # Each on its own kind of machine: the bundled model runtime is fetched for the machine it builds on.
+        # `system` names the fixed-name copies the website links to, e.g. NGOmate-mac-intel.dmg.
         include:
           - os: macos-latest
             name: macOS (Apple silicon)
+            system: mac-apple-silicon
           - os: macos-15-intel
             name: macOS (Intel)
+            system: mac-intel
           - os: windows-latest
             name: Windows
+            system: windows
           # The oldest supported Ubuntu, so the Linux builds run on older systems too.
           - os: ubuntu-22.04
             name: Linux
+            system: linux
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
@@ -165,6 +171,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -176,4 +183,37 @@ jobs:
           releaseName: NGOmate __VERSION__
           releaseBody: A preview build. See the README for what it needs and what is not finished.
           releaseDraft: true
-          prerelease: true
+          # Not a prerelease: GitHub's /releases/latest, which the website's download links use, skips those.
+          # The release body says it is a preview.
+          prerelease: false
+
+      # The installers carry the version in their names. Copies under fixed names let the website and the
+      # README link to /releases/latest/download/<name> without being edited for each release.
+      - name: Attach copies under fixed names
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          fi
+          out="$RUNNER_TEMP/fixed-names"
+          mkdir -p "$out"
+          node -e '
+            const fs = require("fs"), path = require("path")
+            const [system, out] = process.argv.slice(1)
+            const endings = [["-setup.exe", "-setup.exe"], [".dmg", ".dmg"], [".AppImage", ".AppImage"], [".deb", ".deb"], [".rpm", ".rpm"]]
+            let copied = 0
+            for (const file of JSON.parse(process.env.ARTIFACTS || "[]")) {
+              const ending = endings.find(([end]) => file.endsWith(end))
+              if (!ending) continue
+              fs.copyFileSync(file, path.join(out, `NGOmate-${system}${ending[1]}`))
+              copied++
+            }
+            if (copied === 0) { console.error(`::error::No installer found to copy for ${system}.`); process.exit(1) }
+          ' "$SYSTEM" "$out"
+          gh release upload "$tag" "$out"/* --clobber

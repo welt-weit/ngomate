@@ -26,6 +26,7 @@
 		<link rel="manifest" href="/site.webmanifest" />
 		<meta name="theme-color" content="#0f2a2e" />
 		<link rel="stylesheet" href="/src/style.css" />
+		<script type="module" src="/src/download.ts"></script>
 	</head>
 	<body>
 		<header class="top">
@@ -52,29 +53,36 @@
 					else.
 				</p>
 				<div class="actions">
+					<!-- Fixed file names on the latest release, attached by the Release workflow. -->
 					<a
 						class="button"
-						href="https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_aarch64.dmg"
+						data-short="Mac (Apple silicon)"
+						href="https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-mac-apple-silicon.dmg"
 						>Download for Mac (Apple silicon)</a
 					>
 					<a
 						class="button secondary"
-						href="https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_x64-setup.exe"
+						data-system="windows"
+						data-short="Windows"
+						href="https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-windows-setup.exe"
 						>Windows</a
 					>
 					<a
 						class="button secondary"
-						href="https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_x64.dmg"
+						data-short="Mac (Intel)"
+						href="https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-mac-intel.dmg"
 						>Mac (Intel)</a
 					>
 					<a
 						class="button secondary"
-						href="https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_amd64.AppImage"
+						data-system="linux"
+						data-short="Linux"
+						href="https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-linux.AppImage"
 						>Linux</a
 					>
 				</div>
 				<p class="soon">
-					Preview 0.0.1, free. The model is a separate download inside the app.
+					An early preview, free. The model is a separate download inside the app.
 					<a href="https://github.com/welt-weit/ngomate/releases">All downloads</a>, including .deb
 					and .rpm · <a href="https://github.com/welt-weit/ngomate">Code on GitHub</a>
 				</p>
@@ -274,7 +282,7 @@
 				<h2>Where it stands</h2>
 				<p>
 					NGOmate is an early preview: chat, drafting from your documents, memory, connectors and
-					the three ready-made tasks work, and much of what is above is still to come.
+					the three ready-made tasks work. The plans under “Where it's going” are still to come.
 				</p>
 				<p>
 					The installers are not signed yet, so your computer will warn you the first time. On a

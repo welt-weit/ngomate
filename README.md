@@ -29,12 +29,12 @@ It does this with an AI model that runs on your own laptop. There is no subscrip
 
 | System | Installer |
 |---|---|
-| Mac with Apple silicon (M1 or later) | [NGOmate_0.0.1_aarch64.dmg](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_aarch64.dmg) |
-| Mac with Intel | [NGOmate_0.0.1_x64.dmg](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_x64.dmg) |
-| Windows | [NGOmate_0.0.1_x64-setup.exe](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_x64-setup.exe) |
-| Linux | [AppImage](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_amd64.AppImage) · [.deb](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate_0.0.1_amd64.deb) · [.rpm](https://github.com/welt-weit/ngomate/releases/download/v0.0.1/NGOmate-0.0.1-1.x86_64.rpm) |
+| Mac with Apple silicon (M1 or later) | [NGOmate-mac-apple-silicon.dmg](https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-mac-apple-silicon.dmg) |
+| Mac with Intel | [NGOmate-mac-intel.dmg](https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-mac-intel.dmg) |
+| Windows | [NGOmate-windows-setup.exe](https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-windows-setup.exe) |
+| Linux | [AppImage](https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-linux.AppImage) · [.deb](https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-linux.deb) · [.rpm](https://github.com/welt-weit/ngomate/releases/latest/download/NGOmate-linux.rpm) |
 
-Every version is on the [releases page](https://github.com/welt-weit/ngomate/releases). The model is a separate download, chosen inside the app.
+These always point to the latest release. Every version, with the files named by version, is on the [releases page](https://github.com/welt-weit/ngomate/releases). The model is a separate download, chosen inside the app.
 
 > [!IMPORTANT]
 > The installers are not signed yet, so your system warns you the first time you open NGOmate. On a Mac, open it once, then choose **Open Anyway** under System Settings → Privacy & Security. On Windows, choose **More info** → **Run anyway** in the SmartScreen message.
