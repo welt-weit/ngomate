@@ -27,6 +27,7 @@
 		<meta name="theme-color" content="#0f2a2e" />
 		<link rel="stylesheet" href="/src/style.css" />
 		<script type="module" src="/src/download.ts"></script>
+		<script type="module" src="/src/network.ts"></script>
 	</head>
 	<body>
 		<header class="top">
@@ -86,6 +87,19 @@
 					<a href="https://github.com/welt-weit/ngomate/releases">All downloads</a>, including .deb
 					and .rpm · <a href="https://github.com/welt-weit/ngomate">Code on GitHub</a>
 				</p>
+				<!-- Screenshots are taken from the Storybook screens, with made-up data. -->
+				<figure class="shot">
+					<picture>
+						<source srcset="/screens/draft-dark.webp" media="(prefers-color-scheme: dark)" />
+						<img
+							src="/screens/draft-light.webp"
+							width="1600"
+							height="473"
+							alt="NGOmate drafting the needs section of a water proposal from the user's notes, with a table of figures, a note on what is missing, and a reminder to check every name and figure."
+						/>
+					</picture>
+					<figcaption>A proposal section drafted from your notes, with what is missing and what to check.</figcaption>
+				</figure>
 			</section>
 
 			<section>
@@ -129,6 +143,138 @@
 						<p>Find funding opportunities, draft a proposal section, or write an update or report.</p>
 					</li>
 				</ul>
+				<div class="shots">
+					<figure class="shot">
+						<picture>
+							<source srcset="/screens/memory-dark.webp" media="(prefers-color-scheme: dark)" />
+							<img
+								src="/screens/memory-light.webp"
+								width="1000"
+								height="310"
+								loading="lazy"
+								alt="NGOmate asking whether to save a note that a funder prefers short reports, with Allow and Don't allow buttons."
+							/>
+						</picture>
+						<figcaption>It asks before it remembers anything.</figcaption>
+					</figure>
+					<figure class="shot">
+						<picture>
+							<source srcset="/screens/connectors-dark.webp" media="(prefers-color-scheme: dark)" />
+							<img
+								src="/screens/connectors-light.webp"
+								width="1000"
+								height="664"
+								loading="lazy"
+								alt="The Connectors screen with a grant search, a local files tool, Action Network Worldwide, Apify and any other MCP tool."
+							/>
+						</picture>
+						<figcaption>Connect only what you choose.</figcaption>
+					</figure>
+				</div>
+			</section>
+
+			<section class="vision">
+				<h2>The engine: a commons of what works</h2>
+				<p class="lead">
+					Small organizations keep learning the same lessons on their own: what a funder really
+					wants, how a pilot actually went, what failed and why. We are building the largest open
+					knowledge graph of civil society's field experience, a commons that belongs to the sector,
+					and it is what NGOmate draws on. The model on your laptop stays small; what it can look up
+					keeps growing.
+				</p>
+				<figure class="graph">
+					<svg
+						viewBox="0 0 600 300"
+						role="img"
+						aria-labelledby="graph-title"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						<title id="graph-title">
+							Entries in the commons linked through shared sectors, goals and countries. NGOmate on your
+							laptop sends a question and gets back the entries it cites.
+						</title>
+						<g class="edges">
+							<line x1="80" y1="40" x2="110" y2="145" />
+							<line x1="80" y1="40" x2="225" y2="105" />
+							<line x1="250" y1="30" x2="225" y2="105" />
+							<line x1="70" y1="250" x2="110" y2="145" />
+							<line x1="70" y1="250" x2="225" y2="195" />
+							<line x1="250" y1="262" x2="225" y2="195" />
+							<line x1="250" y1="262" x2="110" y2="145" />
+							<line x1="345" y1="150" x2="225" y2="105" />
+							<line x1="345" y1="150" x2="225" y2="195" />
+							<line class="replaces" x1="250" y1="30" x2="345" y2="150" />
+						</g>
+						<g class="entry">
+							<rect x="25" y="24" width="110" height="32" rx="16" />
+							<text x="80" y="45">Case study</text>
+							<rect x="210" y="14" width="80" height="32" rx="16" />
+							<text x="250" y="35">Guide</text>
+							<rect x="8" y="234" width="124" height="32" rx="16" />
+							<text x="70" y="255">Funder notes</text>
+							<rect x="180" y="246" width="140" height="32" rx="16" />
+							<text x="250" y="267">Lesson learned</text>
+							<rect x="290" y="134" width="110" height="32" rx="16" />
+							<text x="345" y="155">Case study</text>
+						</g>
+						<g class="hub">
+							<rect x="70" y="129" width="80" height="32" rx="16" />
+							<text x="110" y="150">Water</text>
+							<rect x="187" y="89" width="76" height="32" rx="16" />
+							<text x="225" y="110">SDG 6</text>
+							<rect x="187" y="179" width="76" height="32" rx="16" />
+							<text x="225" y="200">Kenya</text>
+						</g>
+						<g class="flow">
+							<line x1="488" y1="132" x2="414" y2="132" />
+							<path d="M414 132 l9 -5 v10 z" />
+							<text x="451" y="122">question</text>
+							<line x1="414" y1="170" x2="488" y2="170" />
+							<path d="M488 170 l-9 -5 v10 z" />
+							<text x="451" y="192">cited entries</text>
+						</g>
+						<g class="laptop">
+							<rect x="496" y="112" width="96" height="66" rx="6" />
+							<path d="M486 182 h116 l-8 10 h-100 z" />
+							<text x="544" y="150">NGOmate</text>
+							<text class="small" x="544" y="214">on your laptop</text>
+						</g>
+					</svg>
+					<figcaption>
+						Every entry is linked by sector, goal and country, and a newer entry can replace an older
+						one. Only your question leaves your computer.
+					</figcaption>
+				</figure>
+				<ul class="features">
+					<li>
+						<h3>Projects share what they learned</h3>
+						<p>
+							When a project ends, the team writes down what worked and what didn't, in its own words,
+							and decides whether to publish it. A person reviews every entry before it goes out, and
+							outside sources are summarised and cited, never copied.
+						</p>
+					</li>
+					<li>
+						<h3>A graph, not a pile of documents</h3>
+						<p>
+							Case studies, guides and funder knowledge, sorted the way the sector already works: by
+							OECD sector, Sustainable Development Goal and country. Entries link to each other, so
+							one finding leads to the next and a newer one replaces what it outdates.
+						</p>
+					</li>
+					<li>
+						<h3>Your assistant draws on it</h3>
+						<p>
+							Connect the commons and NGOmate looks things up before it answers, naming the entries
+							it used. Only your question is sent, never your documents or your notes.
+						</p>
+					</li>
+				</ul>
+				<p class="muted">
+					Every organization that shares what it learned makes everyone else's assistant a little
+					better. The commons is just starting, and sorting and linking its entries is being built
+					now.
+				</p>
 			</section>
 
 			<section class="vision">
