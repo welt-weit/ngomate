@@ -13,3 +13,4 @@ apps/desktop/src-tauri/icons/android/
 apps/desktop/src-tauri/icons/ios/
 packages/tauri/Cargo.lock
 storybook-static/
+.DS_Store
