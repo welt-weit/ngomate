@@ -47,5 +47,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxdo-dev pkg-config
+      # The model server the installers bundle, and a tiny test model, so one test can start the real server
+      # the way the app does. These machines have no graphics card, which is the no-Vulkan case: the server
+      # has to fall back to the processor by itself.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Fetch the model server and a test model
+        shell: bash
+        run: |
+          node scripts/fetch-runtime.mjs
+          server="$GITHUB_WORKSPACE/apps/desktop/src-tauri/runtime/llama-server"
+          if [ "$RUNNER_OS" = Windows ]; then server="$server.exe"; fi
+          echo "NGOMATE_SMOKE_SERVER=$server" >> "$GITHUB_ENV"
+          echo "NGOMATE_SMOKE_MODEL=$(node scripts/fetch-test-model.mjs)" >> "$GITHUB_ENV"
+      - name: Show the devices the model server finds
+        shell: bash
+        run: '"$NGOMATE_SMOKE_SERVER" --list-devices'
       - run: cargo test
         working-directory: packages/tauri

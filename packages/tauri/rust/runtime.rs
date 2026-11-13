@@ -318,6 +318,34 @@ mod tests {
         assert_ne!(random_key(), random_key());
     }
 
+    /// The real model server, started the way the app starts it, on a tiny model. Skipped unless both
+    /// variables are set: the hand-started native check sets them after `scripts/fetch-runtime.mjs` and
+    /// `scripts/fetch-test-model.mjs`. Its own variables, because another test here clears
+    /// `NGOMATE_LLAMA_SERVER` while tests run side by side.
+    #[tokio::test]
+    async fn the_bundled_server_starts_and_answers_only_with_its_key() {
+        let (Ok(server), Ok(model)) = (std::env::var("NGOMATE_SMOKE_SERVER"), std::env::var("NGOMATE_SMOKE_MODEL"))
+        else {
+            return;
+        };
+        let runtime = Runtime::default();
+        let running = runtime.start(Path::new(&server), "smoke", Path::new(&model), 256).await.unwrap();
+        let completion = format!("{}/completion", running.base_url.trim_end_matches("/v1"));
+        let body = r#"{"prompt":"Once upon a time","n_predict":8}"#;
+        let client = reqwest::Client::new();
+        let post = || client.post(&completion).header("content-type", "application/json").body(body);
+
+        let refused = post().send().await.unwrap();
+        assert_eq!(refused.status(), 401, "answered without the key");
+
+        let answer = post().bearer_auth(&running.api_key).send().await.unwrap();
+        assert!(answer.status().is_success(), "status {}", answer.status());
+        let answer: serde_json::Value = serde_json::from_str(&answer.text().await.unwrap()).unwrap();
+        let text = answer["content"].as_str().unwrap_or_default();
+        assert!(!text.trim().is_empty(), "empty answer: {answer}");
+        runtime.stop_and_wait().await;
+    }
+
     #[test]
     fn says_so_when_the_runtime_is_missing() {
         std::env::remove_var("NGOMATE_LLAMA_SERVER");
