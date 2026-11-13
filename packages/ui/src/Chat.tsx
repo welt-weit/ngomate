@@ -74,8 +74,26 @@ function Notice({ notice }: { notice: AnswerNotice }) {
 					This conversation is too long for the model to hold, so it did not see the earliest part.
 				</p>
 			)}
+			{(notice.figureProblems?.length ?? 0) > 0 && (
+				<div>
+					<p>Check these figures against your material:</p>
+					<ul className="ngm-figures">
+						{notice.figureProblems?.map((item) => (
+							<li key={item.figure}>
+								<strong>{item.figure}</strong>
+								{item.problem === 'different'
+									? `: your material says ${item.material?.join(', ')}`
+									: ': not found in your material'}
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
 			{notice.checkFigures && (
-				<p>Check every name and figure against your material. The model can mix them up.</p>
+				<p>
+					{(notice.figureProblems?.length ?? 0) > 0 ? 'Also check' : 'Check'} every name and figure
+					against your material. The model can mix them up.
+				</p>
 			)}
 			{notice.unsourcedDates.length > 0 && (
 				<p>

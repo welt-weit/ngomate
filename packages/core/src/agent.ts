@@ -1,4 +1,5 @@
 import { extractDates, findUnsourcedDates } from './dates.js'
+import { type FigureProblem, checkFigures } from './figures.js'
 import { type KnowledgeOptions, isKnowledgeTool, lookUpKnowledge } from './knowledge.js'
 import { extractLinks, findUnsourcedLinks } from './links.js'
 import type { ToolResult, ToolSource } from './mcp.js'
@@ -82,6 +83,11 @@ export type TaskRun = {
 	/** In the answer, but in nothing the person or a tool supplied. Shown to the person to check. */
 	unsourcedDates: string[]
 	unsourcedLinks: string[]
+	/**
+	 * Figures in the answer that the material does not back. Only when the answer drew on material (a
+	 * document, a tool or a knowledge base), because without it every figure would be listed.
+	 */
+	figureProblems: FigureProblem[]
 	/** The answer stopped at the length limit, not because it was finished. */
 	cutOff: boolean
 	/** Tools relevant to this request that there was no room to offer. */
@@ -265,6 +271,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		...(options.sourceTexts ?? []),
 		...suppliedText(history),
 	]
+	const suppliedSources = sources.length
 	const knowledge = options.knowledge
 		? await (async () => {
 				const args = { query: options.knowledge?.query ?? '' }
@@ -353,6 +360,13 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 					})()
 				: [],
 			unsourcedLinks: answer ? findUnsourcedLinks(extractLinks(answer), [known]) : [],
+			figureProblems:
+				answer &&
+				(options.attachments?.trim() ||
+					options.sourceTexts?.some((text) => text.trim()) ||
+					sources.length > suppliedSources)
+					? checkFigures(answer, sources)
+					: [],
 			messages: messages
 				.slice(1)
 				.map((message, index) =>

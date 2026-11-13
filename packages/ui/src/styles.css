@@ -311,6 +311,11 @@
 	margin: 2px 0;
 }
 
+.ngm-figures {
+	margin: 2px 0 4px;
+	padding-left: 18px;
+}
+
 .ngm-error {
 	font-size: 14px;
 	color: var(--ngm-error);

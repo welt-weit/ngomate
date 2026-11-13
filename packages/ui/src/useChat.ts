@@ -376,6 +376,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						unsourcedDates: run.unsourcedDates,
 						unsourcedLinks: run.unsourcedLinks,
 						checkFigures: Boolean(task) && task?.tools === 'none',
+						figureProblems: run.figureProblems,
 						stopped: STOPPED[run.status] ?? null,
 						earlierLeftOut: history.length < conversation.messages.length,
 						partlyRead: blocks.filter((block) => block.cut).map((block) => block.name),

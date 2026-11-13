@@ -141,7 +141,7 @@ describe('chat', () => {
 		expect(await screen.findByText(/did not come from your material/)).toBeTruthy()
 	})
 
-	it('runs a ready-made task with a document, and reminds the person to check figures', async () => {
+	it('runs a ready-made task with a document, lists a figure it does not back, and reminds the person to check', async () => {
 		const { host, chat } = makeHost([say('A draft with 12 tanks.')])
 		render(<NgomateApp host={host} />)
 		await userEvent.click(await screen.findByRole('button', { name: 'Draft a section' }))
@@ -149,7 +149,9 @@ describe('chat', () => {
 		await screen.findByText('notes.txt')
 		await typeAndSend('Question 2')
 		await screen.findByText('A draft with 12 tanks.')
-		expect(await screen.findByText(/Check every name and figure/)).toBeTruthy()
+		expect(await screen.findByText('12 tanks')).toBeTruthy()
+		expect(screen.getByText(/not found in your material/)).toBeTruthy()
+		expect(screen.getByText(/Also check every name and figure/)).toBeTruthy()
 		const request = chat.mock.calls[0]?.[0] as ChatRequest
 		expect(request.tools).toEqual([])
 		expect(request.messages.at(1)?.content).toContain('Use only what is given.')

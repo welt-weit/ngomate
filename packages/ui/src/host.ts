@@ -1,4 +1,11 @@
-import type { ChatMessage, MemoryStore, ModelClient, TaskFile, ToolSource } from '@ngomate/core'
+import type {
+	ChatMessage,
+	FigureProblem,
+	MemoryStore,
+	ModelClient,
+	TaskFile,
+	ToolSource,
+} from '@ngomate/core'
 
 /** One model the app offers. Sizes in bytes. */
 export type ModelEntry = {
@@ -95,6 +102,8 @@ export type AnswerNotice = {
 	unsourcedDates: string[]
 	unsourcedLinks: string[]
 	checkFigures: boolean
+	/** Figures the material does not back. Missing on answers saved before this check existed. */
+	figureProblems?: FigureProblem[]
 	stopped: string | null
 	/** The conversation had grown too long, so the model did not see its beginning. */
 	earlierLeftOut?: boolean

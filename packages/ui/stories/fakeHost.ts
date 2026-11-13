@@ -78,7 +78,16 @@ export const SAMPLE_CONVERSATION: Conversation = {
 		{ role: 'assistant', content: 'Apply at https://made-up.example/apply by 1 May 2027.' },
 	],
 	notices: {
-		3: { unsourcedDates: [], unsourcedLinks: [], checkFigures: true, stopped: null },
+		3: {
+			unsourcedDates: [],
+			unsourcedLinks: [],
+			checkFigures: true,
+			figureProblems: [
+				{ figure: '14 tanks', problem: 'different', material: ['12 rainwater tanks'] },
+				{ figure: '9 schools', problem: 'missing' },
+			],
+			stopped: null,
+		},
 		5: {
 			unsourcedDates: ['2027-05-01'],
 			unsourcedLinks: ['https://made-up.example/apply'],

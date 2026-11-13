@@ -298,6 +298,28 @@ describe('attachments', () => {
 		})
 		expect(run.unsourcedDates).toEqual([])
 	})
+
+	it('lists a figure the attached document does not back, and checks nothing without material', async () => {
+		const notes = 'In 2025 we built 20 rainwater tanks at 9 schools.'
+		const drafted = await runTask({
+			model: scripted(say('We built 20 rainwater tanks at 14 schools.')).model,
+			tools: source().tools,
+			profile,
+			input: 'Draft the need.',
+			attachments: notes,
+		})
+		expect(drafted.figureProblems).toEqual([
+			{ figure: '14 schools', problem: 'different', material: ['9 schools'] },
+		])
+
+		const chatted = await runTask({
+			model: scripted(say('Paris has about 2 million people.')).model,
+			tools: source().tools,
+			profile,
+			input: 'How big is Paris?',
+		})
+		expect(chatted.figureProblems).toEqual([])
+	})
 })
 
 describe('fitHistory', () => {
