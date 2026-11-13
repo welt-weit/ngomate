@@ -21,7 +21,10 @@
 		"ngomate": "yarn workspace @ngomate/cli run ngomate",
 		"bump:patch": "node scripts/bump-version.mjs patch",
 		"bump:minor": "node scripts/bump-version.mjs minor",
-		"bump:major": "node scripts/bump-version.mjs major"
+		"bump:major": "node scripts/bump-version.mjs major",
+		"release": "node scripts/release.mjs cut",
+		"release:check": "node scripts/release.mjs check",
+		"release:publish": "node scripts/release.mjs publish"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
