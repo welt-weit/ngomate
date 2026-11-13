@@ -109,7 +109,25 @@ async function cut(kind) {
 	}
 	// All three or none, so main never moves without its tag.
 	loud('git', ['push', '--atomic', 'origin', 'development', 'development:main', tag])
-	console.log('\n✓ Pushed. The build takes about 20 to 30 minutes:')
+	// GitHub refuses the workflow's own token when it creates a release in this repo (403 "Resource not
+	// accessible by integration", since v0.0.2), though it may upload into one. So the draft is made here,
+	// with the person's own sign-in. The builds take minutes before they look for it.
+	if (!releaseOf(tag)) {
+		loud('gh', [
+			'release',
+			'create',
+			tag,
+			'-R',
+			REPO,
+			'--draft',
+			'--verify-tag',
+			'--title',
+			`NGOmate ${version}`,
+			'--notes',
+			'A preview build. See the README for what it needs and what is not finished.',
+		])
+	}
+	console.log('\n✓ Pushed, and the draft is ready. The build takes about 20 to 30 minutes:')
 	console.log(`  https://github.com/${REPO}/actions/workflows/release.yml`)
 	console.log(`Then: yarn release:check ${version}`)
 }
