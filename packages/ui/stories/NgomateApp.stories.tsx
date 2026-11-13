@@ -227,3 +227,23 @@ export const MemorySettings: Story = {
 		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Memory' }))
 	},
 }
+
+export const UpdateReady: Story = {
+	args: {
+		host: {
+			...createFakeHost({ conversations: [SAMPLE_CONVERSATION] }),
+			checkForUpdate: async () => ({
+				version: '0.0.4',
+				notes:
+					'Drafts now list figures your material does not back.\nThe model server falls back to the processor when there is no graphics card.',
+				install: async (onProgress) => {
+					for (let step = 1; step <= 10; step++) {
+						await new Promise((resolve) => setTimeout(resolve, 300))
+						onProgress(step / 10)
+					}
+					await new Promise(() => {})
+				},
+			}),
+		},
+	},
+}

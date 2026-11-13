@@ -2,6 +2,7 @@ import type { PromptDefinition, TaskFile } from '@ngomate/core'
 import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react'
 import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatStart } from './Chat.js'
+import { UpdateNotice } from './UpdateNotice.js'
 import { makeId } from './format.js'
 import { DEFAULT_SETTINGS, type NgomateHost, type Settings } from './host.js'
 import { MemoryPanel, ModelPanel } from './panels.js'
@@ -274,6 +275,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 					))}
 				</div>
 
+				<UpdateNotice host={host} />
 				<div className="ngm-side-bottom">
 					{nav('model', 'Model')}
 					{nav('addons', 'Connectors')}

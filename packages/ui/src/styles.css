@@ -117,6 +117,27 @@
 	flex: 1;
 }
 
+.ngm-update {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 10px;
+	padding: 10px 12px;
+	font-size: 13px;
+	background: var(--ngm-panel);
+	border: 1px solid var(--ngm-accent);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-update p {
+	margin: 0;
+}
+
+.ngm-update-notes {
+	white-space: pre-wrap;
+	color: var(--ngm-muted);
+}
+
 .ngm-side-bottom {
 	display: flex;
 	flex-direction: column;

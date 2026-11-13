@@ -17,4 +17,5 @@ export {
 } from './primitives.js'
 export { AddonsPanel } from './AddonsPanel.js'
 export { MemoryPanel, ModelPanel } from './panels.js'
+export { UpdateNotice } from './UpdateNotice.js'
 export { useChat } from './useChat.js'

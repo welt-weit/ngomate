@@ -170,10 +170,26 @@ jobs:
             echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
           } >> "$GITHUB_ENV"
 
+      # Signed update files and latest.json, which installed copies check for a newer version. Only with the
+      # update key, whose public half is in tauri.conf.json; without it the release has installers only.
+      - name: Update files, when the key is set
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "No update key, so this build makes no update files."
+            exit 0
+          fi
+          echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$RUNNER_TEMP/updater.json"
+          echo "TAURI_BUILD_ARGS=${TAURI_BUILD_ARGS:-} --config $RUNNER_TEMP/updater.json" >> "$GITHUB_ENV"
+
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
         id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tauriScript: yarn tauri
@@ -183,6 +199,8 @@ jobs:
           releaseName: NGOmate __VERSION__
           releaseBody: A preview build. See the README for what it needs and what is not finished.
           releaseDraft: true
+          # Windows updates install the same setup.exe the website offers, not the .msi.
+          updaterJsonPreferNsis: true
           # Not a prerelease: GitHub's /releases/latest, which the website's download links use, skips those.
           # The release body says it is a preview.
           prerelease: false

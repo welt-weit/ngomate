@@ -816,3 +816,68 @@ describe('useIdleUnload', () => {
 		expect(unload).toHaveBeenCalledTimes(1)
 	})
 })
+
+describe('update notice', () => {
+	afterEach(cleanup)
+
+	it('shows nothing when there is no newer version, or the host cannot tell', async () => {
+		const { host } = makeHost([], {}, { checkForUpdate: async () => null })
+		render(<NgomateApp host={host} />)
+		await screen.findByRole('button', { name: 'New conversation' })
+		expect(screen.queryByText(/is ready/)).toBeNull()
+	})
+
+	it('says a newer version is ready, and installs it only when asked', async () => {
+		const install = vi.fn(async (onProgress: (fraction: number | null) => void) => {
+			onProgress(0.5)
+			await new Promise(() => {})
+		})
+		const { host } = makeHost(
+			[],
+			{},
+			{
+				checkForUpdate: async () => ({ version: '0.0.4', notes: 'Figures are checked.', install }),
+			},
+		)
+		render(<NgomateApp host={host} />)
+		expect(await screen.findByText(/0\.0\.4 is ready/)).toBeTruthy()
+		expect(screen.getByText('Figures are checked.')).toBeTruthy()
+		expect(install).not.toHaveBeenCalled()
+		await userEvent.click(screen.getByRole('button', { name: 'Install and restart' }))
+		expect(install).toHaveBeenCalledTimes(1)
+		expect(await screen.findByRole('button', { name: 'Installing… 50%' })).toBeTruthy()
+		expect(screen.queryByRole('button', { name: 'Later' })).toBeNull()
+	})
+
+	it('says so when installing fails, and can be put off', async () => {
+		const { host } = makeHost(
+			[],
+			{},
+			{
+				checkForUpdate: async () => ({
+					version: '0.0.4',
+					notes: null,
+					install: async () => {
+						throw new Error('signature mismatch')
+					},
+				}),
+			},
+		)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Install and restart' }))
+		expect(await screen.findByText(/could not be installed/)).toBeTruthy()
+		await userEvent.click(screen.getByRole('button', { name: 'Later' }))
+		expect(screen.queryByText(/is ready/)).toBeNull()
+	})
+
+	it('treats a failed check as nothing to offer', async () => {
+		const { host } = makeHost(
+			[],
+			{},
+			{ checkForUpdate: async () => Promise.reject(new Error('offline')) },
+		)
+		render(<NgomateApp host={host} />)
+		await screen.findByRole('button', { name: 'New conversation' })
+		expect(screen.queryByText(/is ready/)).toBeNull()
+	})
+})

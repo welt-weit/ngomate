@@ -128,6 +128,15 @@ export type PickedDocument = {
 	truncated: boolean
 }
 
+/** A newer version of the app that the host can install. */
+export type AvailableUpdate = {
+	version: string
+	/** What changed, as the release describes it. */
+	notes: string | null
+	/** Downloads and installs it, then restarts the app. Progress from 0 to 1, or null when unknown. */
+	install(onProgress: (fraction: number | null) => void): Promise<void>
+}
+
 /**
  * What a host app provides. The interface knows nothing about Tauri or any backend, so the same
  * components can sit in any window that fills this in.
@@ -153,4 +162,9 @@ export interface NgomateHost {
 	setSecret(name: string, value: string): Promise<void>
 	deleteSecret(name: string): Promise<void>
 	models?: ModelHost
+	/**
+	 * For a host that can update itself: a newer version, or null when there is none. Nothing is
+	 * installed until the person chooses to. A host that cannot update leaves this out.
+	 */
+	checkForUpdate?(): Promise<AvailableUpdate | null>
 }
