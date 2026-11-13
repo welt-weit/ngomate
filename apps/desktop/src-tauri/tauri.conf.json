@@ -26,6 +26,13 @@
 			"devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
 		}
 	},
+	"plugins": {
+		"updater": {
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NDJDNTU5N0FEQjIyMEEKUldRS0l0dDZXY1ZDR1R1TzdabC9HNHkxNjFMcndkdHNlY2YrdEE4dzhXZGVZTGMxTTRTS1dqaUIK",
+			"endpoints": ["https://github.com/welt-weit/ngomate/releases/latest/download/latest.json"],
+			"windows": { "installMode": "passive" }
+		}
+	},
 	"bundle": {
 		"active": true,
 		"targets": "all",

@@ -20,6 +20,8 @@ tauri-plugin-http = { version = "2", default-features = false, features = ["rust
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2.3"
 tauri-plugin-updater = "2.10"
+# Tauri's generated code reads the plugin settings in tauri.conf.json with it.
+serde_json = "1"
 tauri-plugin-ngomate = { path = "../../../packages/tauri" }
 
 # Small over fast: the app waits on the model, not on this code. Unwinding stays on, because reading a
