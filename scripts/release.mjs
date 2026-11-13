@@ -89,16 +89,22 @@ async function cut(kind) {
 		loud('git', ['checkout', '--', ...VERSION_FILES])
 		stop(`The tag ${tag} already exists. The version files are back as they were.`)
 	}
-	loud('git', ['add', ...VERSION_FILES])
-	loud('git', ['commit', '--quiet', '-m', `chore(release): ${version}`])
+	// Asking for the version the files already carry (a bump committed earlier) tags it without a new commit.
+	const bumped = !succeeds('git', ['diff', '--quiet', '--', ...VERSION_FILES])
+	if (bumped) {
+		loud('git', ['add', ...VERSION_FILES])
+		loud('git', ['commit', '--quiet', '-m', `chore(release): ${version}`])
+	}
 	loud('git', ['tag', '-a', tag, '-m', `NGOmate ${version}`])
 
 	console.log(`\nReady: ${tag} on ${git('rev-parse', '--short', 'HEAD')}. Pushing will`)
 	console.log('  · move development and main on GitHub to this commit (main publishes the website)')
 	console.log(`  · push ${tag}, which starts the Release workflow (a draft, nothing public yet)`)
 	if (!(await confirm('Push now?'))) {
-		console.log(`\nNothing pushed. To undo: git tag -d ${tag} && git reset --hard HEAD~1`)
-		console.log(`To push later: git push --atomic origin development development:main ${tag}`)
+		// Taken back here, so a later push of development cannot carry a release nobody tagged on GitHub.
+		loud('git', ['tag', '-d', tag])
+		if (bumped) loud('git', ['reset', '--quiet', '--keep', 'HEAD~1'])
+		console.log('\nNothing pushed. The release commit and tag are undone.')
 		return
 	}
 	// All three or none, so main never moves without its tag.
