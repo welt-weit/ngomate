@@ -8,7 +8,8 @@
 // The Release workflow builds the installers into a draft when the tag arrives. Publishing that draft is
 // what moves every "latest" download link, so check the installers before you publish.
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { fileURLToPath } from 'node:url'
@@ -205,6 +206,61 @@ async function linksWork(version) {
 	return ok
 }
 
+/**
+ * The build writes latest.json while the release is a draft, so it points at GitHub API addresses
+ * (api.github.com/…/assets/<id>). Those need a special request and allow about 60 an hour per internet
+ * address without sign-in, which an office or school network shares. So before publishing, each one is
+ * replaced with the plain download address of this version's file of the same name.
+ */
+function useDownloadLinksForUpdates(version) {
+	const tag = `v${version}`
+	// `gh release view` sees a draft, which the API's release-by-tag does not.
+	const { assets } = JSON.parse(
+		quiet('gh', ['release', 'view', tag, '-R', REPO, '--json', 'assets']),
+	)
+	if (!assets.some((asset) => asset.name === 'latest.json')) {
+		console.log('No latest.json in this release, so installed copies are not offered it.')
+		return
+	}
+	const names = new Map(assets.map((asset) => [asset.apiUrl, asset.name]))
+	const work = mkdtempSync(join(tmpdir(), 'ngomate-release-'))
+	try {
+		loud('gh', ['release', 'download', tag, '-R', REPO, '-p', 'latest.json', '-D', work])
+		const file = join(work, 'latest.json')
+		const manifest = JSON.parse(readFileSync(file, 'utf8'))
+		for (const [system, entry] of Object.entries(manifest.platforms ?? {})) {
+			if (!entry.url.startsWith('https://api.github.com/')) continue
+			const name = names.get(entry.url)
+			if (!name) stop(`latest.json names a file this release does not have (${system}).`)
+			entry.url = `https://github.com/${REPO}/releases/download/${tag}/${encodeURIComponent(name)}`
+		}
+		writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+		loud('gh', ['release', 'upload', tag, file, '-R', REPO, '--clobber'])
+	} finally {
+		rmSync(work, { recursive: true, force: true })
+	}
+}
+
+/** Installed copies read latest.json from the newest release and download what it names. */
+async function updatesWork(version) {
+	const response = await fetch(`https://github.com/${REPO}/releases/latest/download/latest.json`)
+	if (!response.ok) {
+		console.log('  (no latest.json, so no update is offered)')
+		return true
+	}
+	const manifest = await response.json()
+	let ok = manifest.version === version
+	console.log(`  ${ok ? '✓' : '✗'} latest.json offers ${manifest.version}`)
+	for (const [system, entry] of Object.entries(manifest.platforms ?? {})) {
+		const reply = await fetch(entry.url, { method: 'HEAD', redirect: 'manual' })
+		const good = reply.status === 302 && Boolean(entry.signature)
+		ok &&= good
+		if (!good) console.log(`  ✗ ${system} (${reply.status}${entry.signature ? '' : ', unsigned'})`)
+	}
+	if (ok) console.log("  ✓ every system's update downloads, signed")
+	return ok
+}
+
 async function publish(version) {
 	const release = check(version)
 	if (release.isDraft) {
@@ -212,12 +268,16 @@ async function publish(version) {
 			!(await confirm(`Publish v${version}? Every download link on the website will point to it.`))
 		)
 			return console.log('Not published.')
+		useDownloadLinksForUpdates(version)
 		loud('gh', ['release', 'edit', `v${version}`, '-R', REPO, '--draft=false'])
 	}
 	console.log("\nThe website's download links:")
 	if (!(await linksWork(version)))
 		stop('Some links do not lead to this release yet. Try again in a minute.')
-	console.log('\n✓ Published, and every download link works.')
+	console.log('\nUpdates for installed copies:')
+	if (!(await updatesWork(version)))
+		stop('Installed copies cannot update to this release yet. Try again in a minute.')
+	console.log('\n✓ Published, every download link works, and installed copies are offered it.')
 }
 
 const [command, argument] = process.argv.slice(2).filter((arg) => !arg.startsWith('--'))
