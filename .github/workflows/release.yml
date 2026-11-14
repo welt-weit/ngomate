@@ -87,14 +87,14 @@ jobs:
           CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           ID: ${{ secrets.APPLE_ID }}
-          PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ -z "$CERTIFICATE" ]; then
             echo "No Apple signing secrets, so this Mac build is unsigned."
             exit 0
           fi
-          for name in CERTIFICATE_PASSWORD SIGNING_IDENTITY ID PASSWORD TEAM_ID; do
+          for name in CERTIFICATE_PASSWORD SIGNING_IDENTITY ID ID_PASSWORD TEAM_ID; do
             if [ -z "${!name}" ]; then
               echo "::error::APPLE_CERTIFICATE is set but APPLE_${name} is not."
               exit 1
@@ -120,7 +120,7 @@ jobs:
           {
             echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY"
             echo "APPLE_ID=$ID"
-            echo "APPLE_PASSWORD=$PASSWORD"
+            echo "APPLE_PASSWORD=$ID_PASSWORD"
             echo "APPLE_TEAM_ID=$TEAM_ID"
           } >> "$GITHUB_ENV"
 
