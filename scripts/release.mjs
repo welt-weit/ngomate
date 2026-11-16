@@ -4,6 +4,7 @@
 //   yarn release patch|minor|major|x.y.z   bump, commit, tag, and push development, main and the tag together
 //   yarn release:check [x.y.z]             is the draft complete? (default: the app's current version)
 //   yarn release:publish [x.y.z]           publish the draft, then test the website's download links
+//   yarn promote                            move main to development without a release, and push both
 //
 // The Release workflow builds the installers into a draft when the tag arrives. Publishing that draft is
 // what moves every "latest" download link, so check the installers before you publish.
@@ -60,11 +61,11 @@ async function confirm(question) {
 	return /^y(es)?$/i.test(answer.trim())
 }
 
-function preflight() {
-	if (!succeeds('gh', ['auth', 'status']))
+function preflight({ needsGitHubCli = true } = {}) {
+	if (needsGitHubCli && !succeeds('gh', ['auth', 'status']))
 		stop('The GitHub CLI is not signed in. Run: gh auth login')
 	const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
-	if (branch !== 'development') stop(`Releases are cut from development, not ${branch}.`)
+	if (branch !== 'development') stop(`main only moves to development, and this is ${branch}.`)
 	if (git('status', '--porcelain', '--untracked-files=no'))
 		stop('There are uncommitted changes. Commit or stash them first.')
 	loud('git', ['fetch', '--quiet', '--tags', 'origin'])
@@ -280,8 +281,30 @@ async function publish(version) {
 	console.log('\n✓ Published, every download link works, and installed copies are offered it.')
 }
 
+/** Code on main without a new version, for when a release is not wanted yet. No tag, so no build. */
+async function promote() {
+	preflight({ needsGitHubCli: false })
+	const ahead = git('rev-list', '--count', 'origin/main..HEAD')
+	if (ahead === '0') return console.log('main already has everything on development.')
+	console.log(
+		`\nmain moves forward by ${ahead} commit(s) to ${git('rev-parse', '--short', 'HEAD')}:`,
+	)
+	console.log(git('log', '--oneline', 'origin/main..HEAD'))
+	const site = git('diff', '--name-only', 'origin/main', 'HEAD', '--', 'apps/site')
+	if (site)
+		console.log(`\n! This changes the website, which goes live when main is pushed:\n${site}`)
+	if (!(await confirm('Push development and main now?'))) return console.log('Nothing pushed.')
+	// Both or neither, so main never holds a commit development does not.
+	loud('git', ['push', '--atomic', 'origin', 'development', 'development:main'])
+	console.log('\n✓ main is at development on GitHub.')
+}
+
 const [command, argument] = process.argv.slice(2).filter((arg) => !arg.startsWith('--'))
 if (command === 'cut') await cut(argument)
 else if (command === 'check') check(argument ?? appVersion())
 else if (command === 'publish') await publish(argument ?? appVersion())
-else stop('Usage: release.mjs cut <patch|minor|major|x.y.z> | check [x.y.z] | publish [x.y.z]')
+else if (command === 'promote') await promote()
+else
+	stop(
+		'Usage: release.mjs cut <patch|minor|major|x.y.z> | check [x.y.z] | publish [x.y.z] | promote',
+	)
