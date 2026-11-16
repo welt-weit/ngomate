@@ -261,9 +261,9 @@ function ConnectedAddon({ addon, host, settings, onChange }: PanelProps & { addo
 						)}
 						{addon.enabled && searchesKnowledge && (
 							<p className="ngm-muted">
-								Each question you ask in chat is also sent to its knowledge search, so answers can
-								draw on it. Your documents are not sent. Turn off the knowledge search tool to stop
-								this.
+								When a question in chat needs it, the assistant sends your question to its knowledge
+								search, so the answer can draw on it. Your documents are not sent. Turn off the
+								knowledge search tool to stop this.
 							</p>
 						)}
 						{status.state === 'connected' && (
