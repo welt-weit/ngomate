@@ -428,6 +428,7 @@ mod tests {
             sha256: sha(body),
             size_bytes: body.len() as u64,
             min_ram_gb: 1,
+            search_knowledge_first: false,
         }
     }
 

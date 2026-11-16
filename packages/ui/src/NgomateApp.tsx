@@ -173,8 +173,14 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		if (!host.models)
 			throw new Error('This app cannot run a local model. Choose a model server under Model.')
 		// Asked every time: the host reuses a running model, and restarts one that has died.
-		const { baseUrl, apiKey, contextTokens } = await host.models.start(choice.id)
-		return { client: host.createModelClient(baseUrl, choice.id, apiKey), contextTokens }
+		const { baseUrl, apiKey, contextTokens, searchKnowledgeFirst } = await host.models.start(
+			choice.id,
+		)
+		return {
+			client: host.createModelClient(baseUrl, choice.id, apiKey),
+			contextTokens,
+			searchKnowledgeFirst,
+		}
 	}, [host, settings?.model])
 
 	const deps = useMemo(

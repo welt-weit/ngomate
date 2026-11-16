@@ -54,7 +54,18 @@ export interface ModelHost {
 	chooseFolder(): Promise<boolean>
 	/** Back to the usual folder, with the same offer. */
 	resetFolder(): Promise<void>
-	start(id: string): Promise<{ baseUrl: string; apiKey: string; contextTokens: number }>
+	/**
+	 * `searchKnowledgeFirst`: in chat, search a connected knowledge base before every message rather than
+	 * when the model asks, for a model that seldom asks.
+	 */
+	start(
+		id: string,
+	): Promise<{
+		baseUrl: string
+		apiKey: string
+		contextTokens: number
+		searchKnowledgeFirst?: boolean
+	}>
 	stop(): Promise<void>
 }
 

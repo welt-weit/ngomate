@@ -1,5 +1,7 @@
 /// Models the app offers, pinned to a revision and checksum, so what passed testing is what downloads.
 /// `min_ram_gb` leaves room for the system and other programs.
+/// `search_knowledge_first`: in chat, a connected knowledge base is searched before every message instead
+/// of when the model asks, for a model that seldom asks or answers without reading what it found.
 pub struct Model {
     pub id: &'static str,
     pub name: &'static str,
@@ -10,6 +12,7 @@ pub struct Model {
     pub sha256: &'static str,
     pub size_bytes: u64,
     pub min_ram_gb: u64,
+    pub search_knowledge_first: bool,
 }
 
 pub const MODELS: &[Model] = &[
@@ -23,6 +26,7 @@ pub const MODELS: &[Model] = &[
         sha256: "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
         size_bytes: 5027783488,
         min_ram_gb: 12,
+        search_knowledge_first: false,
     },
     Model {
         id: "ministral-3-8b-q4",
@@ -34,6 +38,7 @@ pub const MODELS: &[Model] = &[
         sha256: "33e7a72cf5e6e2cfc2f2847075acc013d68bba023e35310cef86b5cf8fdca761",
         size_bytes: 5198911904,
         min_ram_gb: 12,
+        search_knowledge_first: false,
     },
     Model {
         id: "granite-4.2-8b-q4",
@@ -45,6 +50,7 @@ pub const MODELS: &[Model] = &[
         sha256: "16a9369d0805f80b7377d25d87f937a90c05dc04ad79173a52001e42c9aab311",
         size_bytes: 5347917952,
         min_ram_gb: 12,
+        search_knowledge_first: false,
     },
     Model {
         id: "qwen3-4b-q4",
@@ -56,6 +62,7 @@ pub const MODELS: &[Model] = &[
         sha256: "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
         size_bytes: 2497280256,
         min_ram_gb: 6,
+        search_knowledge_first: false,
     },
     Model {
         id: "granite-4.2-3b-q4",
@@ -67,6 +74,7 @@ pub const MODELS: &[Model] = &[
         sha256: "e0406663965846ae22a403456eb826ccce5f450840491f71952f18a7cb78e7d5",
         size_bytes: 2244011552,
         min_ram_gb: 4,
+        search_knowledge_first: true,
     },
 ];
 

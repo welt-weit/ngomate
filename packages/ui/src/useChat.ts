@@ -129,7 +129,12 @@ export type PendingWrite = WriteRequest & { resolve: (approved: boolean) => void
 export type ChatDeps = {
 	host: NgomateHost
 	settings: Settings
-	getModel: () => Promise<{ client: ModelClient; contextTokens?: number }>
+	getModel: () => Promise<{
+		client: ModelClient
+		contextTokens?: number
+		/** Search a connected knowledge base before every chat message, not when the model asks. */
+		searchKnowledgeFirst?: boolean
+	}>
 	/** Called after each change that should reach the conversation list. */
 	onSaved: () => void
 	/** A request started or ended, so a host can tell when a model is idle. */
@@ -269,9 +274,11 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				})
 
 				setStartingModel(true)
-				const { client: model, contextTokens } = await depsRef.current
-					.getModel()
-					.finally(() => setStartingModel(false))
+				const {
+					client: model,
+					contextTokens,
+					searchKnowledgeFirst,
+				} = await depsRef.current.getModel().finally(() => setStartingModel(false))
 				const room = textBudget(contextTokens)
 				setBudget(room)
 				// A draft needs every fact it can get. A question needs the passages that answer it.
@@ -312,13 +319,14 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					.join('\n\n')
 				// Open chat only: a ready-made task has its own material and every token spoken for. The model
 				// decides whether to search: passages found for "thanks" or "draft an email" pull a small model's
-				// answer off course, and a knowledge base of field practice has nothing for them anyway.
+				// answer off course, and a knowledge base of field practice has nothing for them anyway. A model
+				// that seldom asks, or answers without reading what a search it asked for found, is searched for.
 				const knowledge =
 					!task && text.trim() && depsRef.current.settings.addons.some((addon) => addon.enabled)
 						? {
 								query: passageQuery(text, conversation.messages),
 								maxChars: room.knowledge,
-								onRequest: true,
+								onRequest: !searchKnowledgeFirst,
 							}
 						: undefined
 				const history: ChatMessage[] = fitHistory(

@@ -491,6 +491,56 @@ describe('chat', () => {
 		expect(await screen.findByText(/Looked up in the knowledge base: Soil guide/)).toBeTruthy()
 	})
 
+	it('searches before every message for a model that seldom asks', async () => {
+		const callTool = vi.fn(async () => ({
+			text: JSON.stringify({
+				passages: [{ text: 'Compost helps.', heading: null, entry: { title: 'Soil guide' } }],
+			}),
+			isError: false,
+		}))
+		const source: ToolSource = {
+			listTools: async () => [
+				{
+					name: 'search_knowledge',
+					description: 'Find',
+					inputSchema: {},
+					annotations: { readOnly: true },
+				},
+			],
+			callTool,
+			close: async () => {},
+		}
+		const addon = {
+			id: 'a',
+			name: 'Wiki',
+			connection: { kind: 'http' as const, url: 'https://x.example' },
+			enabled: true,
+			allowDestructive: false,
+		}
+		const models = {
+			start: async () => ({
+				baseUrl: 'http://127.0.0.1:1/v1',
+				apiKey: 'k',
+				contextTokens: 8192,
+				searchKnowledgeFirst: true,
+			}),
+			stop: async () => {},
+		} as unknown as NonNullable<NgomateHost['models']>
+		const { host } = makeHost(
+			[say('Use compost.')],
+			{ addons: [addon], model: { kind: 'local', id: 'small' } },
+			{ connectAddon: async () => source, models },
+		)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('How do we restore soil?')
+		await screen.findByText('Use compost.')
+		expect(callTool).toHaveBeenCalledTimes(1)
+		expect(callTool).toHaveBeenCalledWith(
+			'search_knowledge',
+			expect.objectContaining({ query: 'How do we restore soil?' }),
+		)
+	})
+
 	it('does not render model text as HTML', async () => {
 		const { host } = makeHost([
 			say('Hello <img src=x onerror="alert(1)"> world ![a](https://x.example/p.png)'),
@@ -634,7 +684,7 @@ describe('connectors', () => {
 		await toConnectors()
 		await screen.findByText('Connected')
 		await userEvent.click(screen.getByRole('button', { name: 'Manage Grant search' }))
-		const notice = /the assistant sends your question to its knowledge search/
+		const notice = /the assistant sends your question to its knowledge/
 		expect(await screen.findByText(notice)).toBeTruthy()
 		await userEvent.click(screen.getByRole('checkbox', { name: /Search knowledge/ }))
 		expect(screen.queryByText(notice)).toBeNull()

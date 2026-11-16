@@ -289,15 +289,24 @@ async fn model_folder_reset<R: TauriRuntime>(
     switch_models_folder(&app, &runtime, &downloads, None).await
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Started {
+    #[serde(flatten)]
+    running: Running,
+    search_knowledge_first: bool,
+}
+
 #[tauri::command]
-async fn runtime_start<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>, id: String) -> Result<Running> {
+async fn runtime_start<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>, id: String) -> Result<Started> {
     app.state::<FolderChange>().check()?;
     let entry = model(&id)?;
     let server = runtime::find_server(app.path().resource_dir().ok())?;
     let path = models::installed_path(&usable_models_dir(&app)?, entry);
     let mut system = sysinfo::System::new();
     system.refresh_memory();
-    runtime.start(&server, &id, &path, runtime::context_for_ram(total_ram_gb(&system))).await
+    let running = runtime.start(&server, &id, &path, runtime::context_for_ram(total_ram_gb(&system))).await?;
+    Ok(Started { running, search_knowledge_first: entry.search_knowledge_first })
 }
 
 #[tauri::command]
