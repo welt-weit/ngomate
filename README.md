@@ -79,9 +79,10 @@ Each task is a plain text file, so you can read what it tells the model and chan
 
 ## Knowledge base
 
-Connect a service that has a knowledge base, and NGOmate looks things up there before it answers. Any connector that offers a `search_knowledge` tool counts, for example a shared library of guides, case studies and funder knowledge for your sector.
+Connect a service that has a knowledge base, and NGOmate can look things up there before it answers. Any connector that offers a `search_knowledge` tool counts, for example a shared library of guides, case studies and funder knowledge for your sector.
 
-- Only your question is sent to the service, never your documents or your memory notes.
+- The model decides whether a message needs it. A thank-you or a translation is answered without a search.
+- Only your question is sent to the service, never your documents or your memory notes, and never words the model chose.
 - What comes back is treated as material to answer from, never as instructions to follow.
 - The answer names the entries it used, and nothing else is presented as coming from them.
 - If a service is slow or down, NGOmate answers without it after a few seconds and tells you so.

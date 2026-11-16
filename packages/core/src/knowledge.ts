@@ -19,7 +19,17 @@ export type KnowledgeOptions = {
 	/** Room for passages in what the model is sent. */
 	maxChars: number
 	timeoutMs?: number
+	/**
+	 * Let the model decide whether a message needs the knowledge base, instead of asking before every
+	 * message: "thanks" or "translate this" then costs no search and gets no unrelated passages. The
+	 * search still sends `query`, never words the model chose, so nothing else can reach the service.
+	 */
+	onRequest?: boolean
 }
+
+/** What the model reads when it asked and nothing came back, so it does not take silence as an answer. */
+export const NOTHING_FOUND =
+	'Nothing in the knowledge base is close to this question. Do not present anything as coming from it.'
 
 export type KnowledgeLookup = {
 	/** What goes to the model. Empty when nothing was found, so an unrelated question costs no tokens. */

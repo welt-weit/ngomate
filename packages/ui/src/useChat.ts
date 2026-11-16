@@ -304,10 +304,15 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				const context = [`Today is ${new Date().toISOString().slice(0, 10)}.`, memory]
 					.filter(Boolean)
 					.join('\n\n')
-				// Open chat only: a ready-made task has its own material and every token spoken for.
+				// Open chat only: a ready-made task has its own material and every token spoken for. The model
+				// decides whether to search, so "thanks" or "translate this" brings no unrelated passages.
 				const knowledge =
 					!task && text.trim() && depsRef.current.settings.addons.some((addon) => addon.enabled)
-						? { query: passageQuery(text, conversation.messages), maxChars: room.knowledge }
+						? {
+								query: passageQuery(text, conversation.messages),
+								maxChars: room.knowledge,
+								onRequest: true,
+							}
 						: undefined
 				const history: ChatMessage[] = fitHistory(
 					conversation.messages,

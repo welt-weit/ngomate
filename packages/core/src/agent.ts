@@ -1,6 +1,11 @@
 import { extractDates, findUnsourcedDates } from './dates.js'
 import { type FigureProblem, checkFigures } from './figures.js'
-import { type KnowledgeOptions, isKnowledgeTool, lookUpKnowledge } from './knowledge.js'
+import {
+	type KnowledgeOptions,
+	NOTHING_FOUND,
+	isKnowledgeTool,
+	lookUpKnowledge,
+} from './knowledge.js'
 import { extractLinks, findUnsourcedLinks } from './links.js'
 import type { ToolResult, ToolSource } from './mcp.js'
 import type { ChatMessage, ModelClient, ToolCall, ToolDefinition } from './model.js'
@@ -132,6 +137,7 @@ export type RunTaskOptions = {
 	/**
 	 * Ask any connected knowledge base before the model's first turn, and send what it finds with this
 	 * message only. In code, because a small model does not reliably ask, and each search would take a turn.
+	 * With `onRequest`, the model is offered the search instead and asks only when it needs it.
 	 */
 	knowledge?: KnowledgeOptions
 	/** Full texts that dates and links may come from, when less than the whole is sent. */
@@ -240,7 +246,9 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 
 	const offered = await tools.listTools()
 	const knowledgeTools = options.knowledge ? offered.filter(isKnowledgeTool) : []
-	// Already asked, so offering it as well would only cost tokens and invite a second search.
+	const onRequest = options.knowledge?.onRequest === true
+	// Already asked, so offering it as well would only cost tokens and invite a second search. On request,
+	// it is offered apart from the rest, because matching words would leave it out of most questions.
 	const permitted = offered.filter(
 		(tool) => kindOf(profile, tool.name, offered) && !knowledgeTools.includes(tool),
 	)
@@ -257,7 +265,12 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 				)
 			: { tools: permitted.map(compactTool), didNotFit: [] }
 	// One set for the whole run: a changed set makes the model read the whole prompt again.
-	const allowed: ToolDefinition[] = choice.tools
+	const allowed: ToolDefinition[] = [
+		...(onRequest
+			? knowledgeTools.filter((tool) => kindOf(profile, tool.name, offered)).map(compactTool)
+			: []),
+		...choice.tools,
+	]
 	const missingTools = [...profile.readTools, ...profile.writeTools].filter(
 		(name) => !offered.some((tool) => tool.name === name),
 	)
@@ -272,28 +285,29 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		...suppliedText(history),
 	]
 	const suppliedSources = sources.length
-	const knowledge = options.knowledge
-		? await (async () => {
-				const args = { query: options.knowledge?.query ?? '' }
-				for (const { name } of knowledgeTools) {
-					onEvent?.({ type: 'tool_call', tool: name, args, kind: 'read' })
-				}
-				const found = await lookUpKnowledge(
-					tools,
-					knowledgeTools,
-					options.knowledge as KnowledgeOptions,
-				)
-				for (const { name } of knowledgeTools) {
-					calls.push({
-						tool: name,
-						args,
-						kind: 'read',
-						outcome: found.unavailable ? 'tool_error' : 'ok',
-					})
-				}
-				return found
-			})()
-		: { text: '', sources: [], entries: [], unavailable: false }
+	const knowledge =
+		options.knowledge && !onRequest
+			? await (async () => {
+					const args = { query: options.knowledge?.query ?? '' }
+					for (const { name } of knowledgeTools) {
+						onEvent?.({ type: 'tool_call', tool: name, args, kind: 'read' })
+					}
+					const found = await lookUpKnowledge(
+						tools,
+						knowledgeTools,
+						options.knowledge as KnowledgeOptions,
+					)
+					for (const { name } of knowledgeTools) {
+						calls.push({
+							tool: name,
+							args,
+							kind: 'read',
+							outcome: found.unavailable ? 'tool_error' : 'ok',
+						})
+					}
+					return found
+				})()
+			: { text: '', sources: [], entries: [], unavailable: false }
 	sources.push(...knowledge.sources)
 	const preloaded: string[] = []
 	for (const { tool, args } of profile.preload ?? []) {
@@ -410,6 +424,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 	let toolCallCount = 0
 	let failuresInARow = 0
 	const seenCalls = new Set<string>()
+	let knowledgeAsked = false
 
 	for (let turn = 1; turn <= maxTurns; turn++) {
 		if (isCancelled()) return finish('cancelled', turn - 1, null)
@@ -498,6 +513,47 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		}
 		if (!args) {
 			return refuse('invalid_arguments', null, kind, 'The arguments were not a valid JSON object.')
+		}
+
+		if (onRequest && options.knowledge && isKnowledgeTool(call)) {
+			// The person's question is sent, whatever the model wrote: its words could carry a document.
+			const sent = { query: options.knowledge.query }
+			if (knowledgeAsked) {
+				return refuse(
+					'repeated_call',
+					sent,
+					kind,
+					'You already searched the knowledge base for this message. Use what it returned.',
+				)
+			}
+			knowledgeAsked = true
+			emit?.({ type: 'tool_call', tool: call.name, args: sent, kind })
+			const tool = knowledgeTools.filter((candidate) => candidate.name === call.name)
+			const found = await lookUpKnowledge(source, tool, options.knowledge)
+			record.push({
+				tool: call.name,
+				args: sent,
+				kind,
+				outcome: found.unavailable ? 'tool_error' : 'ok',
+			})
+			emit?.({
+				type: 'tool_result',
+				tool: call.name,
+				isError: found.unavailable,
+				chars: found.text.length,
+			})
+			sources.push(...found.sources)
+			for (const entry of found.entries) {
+				if (!knowledge.entries.includes(entry)) knowledge.entries.push(entry)
+			}
+			if (found.unavailable) {
+				knowledge.unavailable = true
+				return {
+					outcome: 'tool_error',
+					text: 'The knowledge base did not answer. Answer without it and say so.',
+				}
+			}
+			return { outcome: 'ok', text: found.text || NOTHING_FOUND }
 		}
 
 		// The same call again gets the same result, or a second bill from a service that charges per call.
