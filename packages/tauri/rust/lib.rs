@@ -409,3 +409,24 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
         })
         .build()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The interface reads these names, so a model's choice silently stops reaching chat if they change.
+    #[test]
+    fn a_started_model_reports_whether_to_search_first() {
+        let running = Running { base_url: "http://127.0.0.1:1/v1".into(), api_key: "k".into(), id: "m".into(), context_tokens: 4096 };
+        let json = serde_json::to_value(Started { running, search_knowledge_first: true }).unwrap();
+        assert_eq!(json["baseUrl"], "http://127.0.0.1:1/v1");
+        assert_eq!(json["contextTokens"], 4096);
+        assert_eq!(json["searchKnowledgeFirst"], true);
+    }
+
+    #[test]
+    fn only_the_smallest_catalog_model_searches_first() {
+        let first: Vec<_> = catalog::MODELS.iter().filter(|model| model.search_knowledge_first).map(|model| model.id).collect();
+        assert_eq!(first, ["granite-4.2-3b-q4"]);
+    }
+}
