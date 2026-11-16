@@ -49,9 +49,15 @@ export function textBudget(contextTokens: number = UNKNOWN_CONTEXT_TOKENS) {
 
 const CHAT_PROFILE: TaskProfile = {
 	id: 'chat',
+	// Facts about the organization stay limited to its material; general knowledge and writing do not,
+	// or a small model refuses to say what the capital of France is once unrelated passages are in view.
 	instructions:
 		'You help the staff of a nonprofit organization with their back-office work. Use the tools only when ' +
-		'they are needed. Use only the facts in material the person gave you or a tool returned. If what they asked is not in it, say so.',
+		'they are needed. Search the knowledge base only for questions about the platform or about how others ' +
+		'have done this kind of work, not for writing, translating, lists, general knowledge or small talk. ' +
+		'For facts about the organization, its people, funders, deadlines and amounts, use only material the ' +
+		'person gave you or a tool returned, and if they are not in it, say so. General knowledge and writing ' +
+		'you may give yourself, without presenting them as coming from a tool.',
 	readTools: [],
 	writeTools: [],
 	allTools: true,
@@ -304,15 +310,12 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				const context = [`Today is ${new Date().toISOString().slice(0, 10)}.`, memory]
 					.filter(Boolean)
 					.join('\n\n')
-				// Open chat only: a ready-made task has its own material and every token spoken for. The model
-				// decides whether to search, so "thanks" or "translate this" brings no unrelated passages.
+				// Open chat only: a ready-made task has its own material and every token spoken for. Searched
+				// before every message rather than left to the model: a small model without thinking often
+				// skips the search and answers questions about a service from its own guesses.
 				const knowledge =
 					!task && text.trim() && depsRef.current.settings.addons.some((addon) => addon.enabled)
-						? {
-								query: passageQuery(text, conversation.messages),
-								maxChars: room.knowledge,
-								onRequest: true,
-							}
+						? { query: passageQuery(text, conversation.messages), maxChars: room.knowledge }
 						: undefined
 				const history: ChatMessage[] = fitHistory(
 					conversation.messages,

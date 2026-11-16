@@ -296,6 +296,32 @@ describe('stripThinking', () => {
 	})
 })
 
+describe('an empty reply', () => {
+	const profile: TaskProfile = {
+		id: 'chat',
+		instructions: 'Help.',
+		readTools: [],
+		writeTools: [],
+		allTools: true,
+	}
+	const tools: ToolSource = { listTools: async () => [], callTool: vi.fn(), close: async () => {} }
+
+	it('is reported, not shown as a blank answer, and says when the length ran out', async () => {
+		const { model } = scripted({ ...reply([], ''), cutOff: true })
+		const run = await runTask({ model, tools, profile, input: 'Clinic power?' })
+		expect(run.status).toBe('model_error')
+		expect(run.answer).toBeNull()
+		expect(run.error).toMatch(/length limit before writing an answer/)
+	})
+
+	it('is reported when the model simply wrote nothing', async () => {
+		const { model } = scripted(reply([], null))
+		const run = await runTask({ model, tools, profile, input: 'Hello' })
+		expect(run.status).toBe('model_error')
+		expect(run.error).toMatch(/empty answer/)
+	})
+})
+
 describe('connected knowledge base', () => {
 	const openChat: TaskProfile = {
 		id: 'chat',

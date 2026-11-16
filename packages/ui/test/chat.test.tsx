@@ -445,7 +445,7 @@ describe('chat', () => {
 		expect(names).not.toContain('delete_page')
 	})
 
-	it('looks up the question in a connected knowledge base when the model asks', async () => {
+	it('looks up the question in a connected knowledge base', async () => {
 		const callTool = vi.fn(async () => ({
 			text: JSON.stringify({
 				passages: [{ text: 'Compost helps.', heading: null, entry: { title: 'Soil guide' } }],
@@ -472,18 +472,13 @@ describe('chat', () => {
 			allowDestructive: false,
 		}
 		const { host } = makeHost(
-			[say('You are welcome.'), call('search_knowledge', { query: 'soil' }), say('Use compost.')],
+			[say('Use compost.')],
 			{ addons: [addon] },
 			{ connectAddon: async () => source },
 		)
 		render(<NgomateApp host={host} />)
-		// Nothing to look up: no search, and no entries named as if they were consulted.
-		await typeAndSend('Thanks!')
-		await screen.findByText('You are welcome.')
-		expect(callTool).not.toHaveBeenCalled()
 		await typeAndSend('How do we restore soil?')
 		await screen.findByText('Use compost.')
-		expect(callTool).toHaveBeenCalledTimes(1)
 		expect(callTool).toHaveBeenCalledWith(
 			'search_knowledge',
 			expect.objectContaining({ query: 'How do we restore soil?' }),
@@ -634,7 +629,7 @@ describe('connectors', () => {
 		await toConnectors()
 		await screen.findByText('Connected')
 		await userEvent.click(screen.getByRole('button', { name: 'Manage Grant search' }))
-		const notice = /the assistant sends your question to its knowledge search/
+		const notice = /Each question you ask in chat is also sent to its knowledge search/
 		expect(await screen.findByText(notice)).toBeTruthy()
 		await userEvent.click(screen.getByRole('checkbox', { name: /Search knowledge/ }))
 		expect(screen.queryByText(notice)).toBeNull()

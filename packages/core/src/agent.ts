@@ -454,7 +454,19 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		})
 
 		if (reply.toolCalls.length === 0) {
-			if (reply.content) messages.push({ role: 'assistant', content: reply.content })
+			// Nothing to show and nothing to run would end as a silent blank. A thinking model does this when
+			// its reasoning uses up the whole answer length.
+			if (!reply.content?.trim()) {
+				return finish(
+					'model_error',
+					turn,
+					null,
+					reply.cutOff
+						? 'The model reached its length limit before writing an answer. Try again, or use a model that does not think out loud first.'
+						: 'The model returned an empty answer. Try again.',
+				)
+			}
+			messages.push({ role: 'assistant', content: reply.content })
 			return finish('completed', turn, reply.content)
 		}
 
