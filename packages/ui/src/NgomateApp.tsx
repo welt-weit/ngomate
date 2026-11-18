@@ -5,6 +5,17 @@ import { Chat, type ChatStart } from './Chat.js'
 import { UpdateNotice } from './UpdateNotice.js'
 import { makeId } from './format.js'
 import { DEFAULT_SETTINGS, type NgomateHost, type Settings } from './host.js'
+import {
+	type Layout,
+	MAX_PANES,
+	activeId,
+	closeTab,
+	focusTab,
+	openBeside,
+	openTab,
+	replaceActive,
+	singleLayout,
+} from './layout.js'
 import { MemoryPanel, ModelPanel } from './panels.js'
 import {
 	DEFAULT_PRIMITIVES,
@@ -91,11 +102,12 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	const { Button } = usePrimitives()
 	const [settings, setSettings] = useState<Settings | null>(null)
 	const [view, setView] = useState<View>('chat')
-	const [conversationId, setConversationId] = useState(() => makeId('chat'))
+	const [layout, setLayout] = useState<Layout>(() => singleLayout(makeId('chat')))
 	const [conversations, setConversations] = useState<
 		{ id: string; title: string; updatedAt: string }[]
 	>([])
-	const [start, setStart] = useState<ChatStart | null>(null)
+	// For the conversation it was meant for only: other tabs stay as they are.
+	const [start, setStart] = useState<{ id: string; begin: ChatStart } | null>(null)
 	const [prompts, setPrompts] = useState<ConnectorPrompt[]>([])
 	const [openPrompt, setOpenPrompt] = useState<ConnectorPrompt | null>(null)
 
@@ -194,13 +206,39 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		[host, settings, getModel, refreshConversations, onBusyChange],
 	)
 
-	const startNew = (begin: ChatStart | null = null) => {
-		setConversationId(makeId('chat'))
-		setStart(begin)
+	const saved = (id: string) => conversations.some((conversation) => conversation.id === id)
+	/** A tab that holds nothing yet makes way, rather than staying open beside what comes next. */
+	const showHere = (current: Layout, id: string) => {
+		const shown = activeId(current)
+		return shown && !saved(shown) ? replaceActive(current, id) : openTab(current, id)
+	}
+
+	const startNew = (begin: ChatStart | null = null, beside = false) => {
+		const id = makeId('chat')
+		setLayout((current) => (beside ? openBeside(current, id) : showHere(current, id)))
+		setStart(begin ? { id, begin } : null)
 		setView('chat')
 	}
 
+	const show = (id: string, beside = false) => {
+		setLayout((current) => (beside ? openBeside(current, id) : showHere(current, id)))
+		setView('chat')
+	}
+
+	const focusPane = (index: number) =>
+		setLayout((current) =>
+			index === current.focused
+				? current
+				: focusTab(current, index, current.panes[index]?.active ?? ''),
+		)
+
+	const close = (id: string) =>
+		setLayout((current) => closeTab(current, id) ?? singleLayout(makeId('chat')))
+
 	const clearStart = useCallback(() => setStart(null), [])
+	const titleOf = (id: string) =>
+		conversations.find((conversation) => conversation.id === id)?.title ?? 'New conversation'
+	const shown = activeId(layout)
 
 	if (!settings) return <div className="ngm-loading">Loading…</div>
 
@@ -218,7 +256,17 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	return (
 		<>
 			<aside className="ngm-sidebar">
-				{!embedded && <h1 className="ngm-brand">{host.appName}</h1>}
+				{!embedded && (
+					<h1 className="ngm-brand">
+						{host.logo && (
+							<picture>
+								<source srcSet={host.logo.dark} media="(prefers-color-scheme: dark)" />
+								<img src={host.logo.light} alt="" />
+							</picture>
+						)}
+						{host.appName}
+					</h1>
+				)}
 				<Button variant="primary" onClick={() => startNew()}>
 					New conversation
 				</Button>
@@ -258,20 +306,26 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						<div className="ngm-side-item" key={conversation.id}>
 							<Button
 								variant="nav"
-								active={view === 'chat' && conversation.id === conversationId}
-								onClick={() => {
-									setConversationId(conversation.id)
-									setView('chat')
-								}}
+								active={view === 'chat' && conversation.id === shown}
+								onClick={() => show(conversation.id)}
 							>
 								{conversation.title}
+							</Button>
+							<Button
+								variant="quiet"
+								aria-label={`Open ${conversation.title} side by side`}
+								title="Open side by side"
+								disabled={layout.panes.length >= MAX_PANES}
+								onClick={() => show(conversation.id, true)}
+							>
+								◫
 							</Button>
 							<Button
 								variant="quiet"
 								aria-label={`Delete ${conversation.title}`}
 								onClick={async () => {
 									await host.removeConversation(conversation.id)
-									if (conversation.id === conversationId) startNew()
+									close(conversation.id)
 									await refreshConversations()
 								}}
 							>
@@ -300,15 +354,79 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						}}
 					/>
 				)}
-				{/* Stays on the page behind the settings, so opening them does not stop an answer being written. */}
-				<div className="ngm-chat-holder" hidden={view !== 'chat'}>
-					<Chat
-						key={conversationId}
-						deps={deps}
-						conversationId={conversationId}
-						start={start}
-						onStarted={clearStart}
-					/>
+				{/*
+				 * Every open tab stays on the page, hidden when not shown, and so do they all behind the
+				 * settings: switching away never stops an answer being written.
+				 */}
+				<div className="ngm-panes" hidden={view !== 'chat'}>
+					{layout.panes.map((pane, paneIndex) => (
+						<section
+							key={pane.id}
+							className={`ngm-pane${paneIndex === layout.focused ? ' ngm-pane-focused' : ''}`}
+							aria-label={`Pane ${paneIndex + 1}`}
+							onFocusCapture={() => focusPane(paneIndex)}
+							onMouseDownCapture={() => focusPane(paneIndex)}
+						>
+							<div className="ngm-tabs" role="tablist">
+								{pane.tabs.map((id) => (
+									<div className={`ngm-tab${id === pane.active ? ' ngm-tab-active' : ''}`} key={id}>
+										<button
+											type="button"
+											role="tab"
+											aria-selected={id === pane.active}
+											className="ngm-tab-title"
+											onClick={() => setLayout((current) => focusTab(current, paneIndex, id))}
+										>
+											{titleOf(id)}
+										</button>
+										<button
+											type="button"
+											className="ngm-tab-close"
+											aria-label={`Close ${titleOf(id)}`}
+											onClick={() => close(id)}
+										>
+											×
+										</button>
+									</div>
+								))}
+								<span className="ngm-grow" />
+								<button
+									type="button"
+									className="ngm-tab-add"
+									aria-label="New conversation in this pane"
+									title="New conversation"
+									onClick={() => startNew()}
+								>
+									+
+								</button>
+								<button
+									type="button"
+									className="ngm-tab-add"
+									aria-label="New conversation side by side"
+									title="New conversation side by side"
+									disabled={layout.panes.length >= MAX_PANES}
+									onClick={() => startNew(null, true)}
+								>
+									◫
+								</button>
+							</div>
+							{pane.tabs.map((id) => (
+								<div
+									className="ngm-chat-holder"
+									hidden={id !== pane.active}
+									key={id}
+									role="tabpanel"
+								>
+									<Chat
+										deps={deps}
+										conversationId={id}
+										start={start?.id === id ? start.begin : null}
+										onStarted={clearStart}
+									/>
+								</div>
+							))}
+						</section>
+					))}
 				</div>
 				{view === 'model' && (
 					<ModelPanel host={host} settings={settings} onChange={updateSettings} />

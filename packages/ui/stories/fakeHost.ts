@@ -113,6 +113,7 @@ export function fakeModels(installed: string[] = ['qwen3-8b-q4']): ModelHost {
 		minRamGb: 8,
 		installed: installed.includes(id),
 		partialBytes,
+		download: null,
 	})
 	return {
 		info: async () => ({

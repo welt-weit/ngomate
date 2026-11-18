@@ -111,24 +111,84 @@ function Notice({ notice }: { notice: AnswerNotice }) {
 	)
 }
 
-function CopyAndSave({
-	host,
-	text,
-	onProblem,
-}: { host: NgomateHost; text: string; onProblem: (err: unknown) => void }) {
+/** "14:05" today, "12 Nov, 14:05" before. */
+export function formatTime(iso: string, now = new Date()): string {
+	const date = new Date(iso)
+	if (Number.isNaN(date.getTime())) return ''
+	const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+	if (date.toDateString() === now.toDateString()) return time
+	return `${date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}, ${time}`
+}
+
+type MenuItem = { label: string; onSelect: () => void }
+
+/** A "⋯" button that shows a short list of actions. Escape or a click elsewhere closes it. */
+function MessageMenu({ items }: { items: MenuItem[] }) {
 	const { Button } = usePrimitives()
-	const [copied, setCopied] = useState(false)
+	const [open, setOpen] = useState(false)
+	const box = useRef<HTMLDivElement>(null)
+	useEffect(() => {
+		if (!open) return
+		const onDown = (event: MouseEvent) => {
+			if (!box.current?.contains(event.target as Node)) setOpen(false)
+		}
+		const onKey = (event: globalThis.KeyboardEvent) => {
+			if (event.key === 'Escape') setOpen(false)
+		}
+		document.addEventListener('mousedown', onDown)
+		document.addEventListener('keydown', onKey)
+		return () => {
+			document.removeEventListener('mousedown', onDown)
+			document.removeEventListener('keydown', onKey)
+		}
+	}, [open])
 	return (
-		<div className="ngm-row ngm-answer-actions">
+		<div className="ngm-menu" ref={box}>
 			<Button
 				variant="quiet"
-				onClick={() => navigator.clipboard.writeText(text).then(() => setCopied(true), onProblem)}
+				aria-label="More actions"
+				aria-expanded={open}
+				onClick={() => setOpen((shown) => !shown)}
 			>
-				{copied ? 'Copied' : 'Copy'}
+				⋯
 			</Button>
-			<Button variant="quiet" onClick={() => host.saveDocument('draft.md', text).catch(onProblem)}>
-				Save as file
-			</Button>
+			{open && (
+				<div className="ngm-menu-list">
+					{items.map((item) => (
+						<Button
+							key={item.label}
+							variant="quiet"
+							onClick={() => {
+								setOpen(false)
+								item.onSelect()
+							}}
+						>
+							{item.label}
+						</Button>
+					))}
+				</div>
+			)}
+		</div>
+	)
+}
+
+function MessageMeta({
+	time,
+	onRetry,
+	items,
+	note,
+}: { time?: string; onRetry?: () => void; items: MenuItem[]; note?: string | null }) {
+	const { Button } = usePrimitives()
+	return (
+		<div className="ngm-row ngm-message-meta">
+			{time && <time dateTime={time}>{formatTime(time)}</time>}
+			{note && <span>{note}</span>}
+			{onRetry && (
+				<Button variant="quiet" onClick={onRetry}>
+					Retry
+				</Button>
+			)}
+			<MessageMenu items={items} />
 		</div>
 	)
 }
@@ -137,22 +197,48 @@ function CopyAndSave({
 const MessageView = memo(function MessageView({
 	message,
 	notice,
+	time,
+	unanswered,
+	onRetry,
 	host,
 	onProblem,
 }: {
 	message: ChatMessage
 	notice?: AnswerNotice
+	time?: string
+	/** A question whose answer never came. */
+	unanswered?: boolean
+	/** Only on the latest question and answer, while nothing is running. */
+	onRetry?: () => void
 	host: NgomateHost
 	onProblem: (err: unknown) => void
 }) {
-	if (message.role === 'user') return <div className="ngm-message ngm-user">{message.content}</div>
+	const [copied, setCopied] = useState(false)
+	const copy = (text: string): MenuItem => ({
+		label: copied ? 'Copied' : 'Copy',
+		onSelect: () => navigator.clipboard.writeText(text).then(() => setCopied(true), onProblem),
+	})
+	if (message.role === 'user') {
+		return (
+			<div className="ngm-user-turn">
+				<div className="ngm-message ngm-user">{message.content}</div>
+				<MessageMeta
+					time={time}
+					note={unanswered ? 'No answer' : null}
+					onRetry={onRetry}
+					items={[copy(message.content)]}
+				/>
+			</div>
+		)
+	}
 	if (message.role !== 'assistant') return null
 	if (message.toolCalls?.length) {
 		return (
 			<p className="ngm-tool-line">Used {message.toolCalls.map((call) => call.name).join(', ')}</p>
 		)
 	}
-	if (!message.content) return null
+	const text = message.content
+	if (!text) return null
 	return (
 		<div className="ngm-message ngm-assistant">
 			{/* Model text is never rendered as HTML, and its links do not navigate this window. */}
@@ -167,10 +253,20 @@ const MessageView = memo(function MessageView({
 					img: ({ alt }) => <span>{alt}</span>,
 				}}
 			>
-				{message.content}
+				{text}
 			</Markdown>
 			{notice && <Notice notice={notice} />}
-			<CopyAndSave host={host} text={message.content} onProblem={onProblem} />
+			<MessageMeta
+				time={time}
+				items={[
+					copy(text),
+					{
+						label: 'Save as file',
+						onSelect: () => void host.saveDocument('draft.md', text).catch(onProblem),
+					},
+					...(onRetry ? [{ label: 'Retry', onSelect: onRetry }] : []),
+				]}
+			/>
 		</div>
 	)
 })
@@ -240,7 +336,12 @@ export function Chat({
 		}
 	}
 
-	const { messages, notices } = chat.conversation
+	const { messages, notices, times = {} } = chat.conversation
+	const lastQuestion = messages.findLastIndex((message) => message.role === 'user')
+	const lastAnswer = messages.findLastIndex(
+		(message) => message.role === 'assistant' && !message.toolCalls?.length && message.content,
+	)
+	const retry = chat.busy ? undefined : () => void chat.retry()
 	return (
 		<div className="ngm-chat">
 			<div className="ngm-messages" aria-live="polite">
@@ -259,6 +360,13 @@ export function Chat({
 						key={index}
 						message={message}
 						notice={notices[index]}
+						time={times[index]}
+						unanswered={index === lastQuestion && lastAnswer < index && !chat.busy}
+						onRetry={
+							index === lastQuestion || (index === lastAnswer && lastAnswer > lastQuestion)
+								? retry
+								: undefined
+						}
 						host={deps.host}
 						onProblem={onProblem}
 					/>

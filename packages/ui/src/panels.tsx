@@ -21,6 +21,15 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 		refresh().catch((err) => setProblem(String(err)))
 	}, [refresh])
 
+	// A download this panel did not start, because it was closed and opened again, still has to show.
+	const running = progress ?? info?.models.find((model) => model.download)?.download ?? null
+	const following = !progress && Boolean(running)
+	useEffect(() => {
+		if (!following) return
+		const timer = setInterval(() => refresh().catch(() => {}), 1000)
+		return () => clearInterval(timer)
+	}, [following, refresh])
+
 	const guarded = async (action: () => Promise<unknown>) => {
 		setProblem(null)
 		try {
@@ -53,14 +62,14 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 						<span className="ngm-muted ngm-grow">Kept in {info.folder}</span>
 						<Button
 							onClick={() => guarded(() => models.chooseFolder())}
-							disabled={Boolean(progress)}
+							disabled={Boolean(running)}
 						>
 							Change folder
 						</Button>
 						{!info.folderIsDefault && (
 							<Button
 								onClick={() => guarded(() => models.resetFolder())}
-								disabled={Boolean(progress)}
+								disabled={Boolean(running)}
 							>
 								Use the usual folder
 							</Button>
@@ -73,7 +82,7 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 						</p>
 					)}
 					{info.models.map((model) => {
-						const downloading = progress?.id === model.id
+						const downloading = running?.id === model.id
 						const selected = settings.model?.kind === 'local' && settings.model.id === model.id
 						const tooBig = model.minRamGb > info.ramGb
 						return (
@@ -92,13 +101,13 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 										This computer has less memory than this model needs. It may be very slow.
 									</p>
 								)}
-								{downloading && progress && (
+								{downloading && running && (
 									<>
-										<progress max={progress.totalBytes} value={progress.receivedBytes} />
+										<progress max={running.totalBytes} value={running.receivedBytes} />
 										<p className="ngm-muted">
-											{progress.phase === 'verifying'
+											{running.phase === 'verifying'
 												? 'Checking the file…'
-												: `${formatBytes(progress.receivedBytes)} of ${formatBytes(progress.totalBytes)}`}
+												: `${formatBytes(running.receivedBytes)} of ${formatBytes(running.totalBytes)}`}
 										</p>
 									</>
 								)}
@@ -131,7 +140,7 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 										<>
 											<Button
 												variant="primary"
-												disabled={Boolean(progress)}
+												disabled={Boolean(running)}
 												onClick={() =>
 													guarded(async () => {
 														try {

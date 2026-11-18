@@ -170,13 +170,17 @@ fn total_ram_gb(system: &sysinfo::System) -> u64 {
 }
 
 #[tauri::command]
-fn model_info<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>) -> Result<ModelInfo> {
+fn model_info<R: TauriRuntime>(
+    app: AppHandle<R>,
+    runtime: State<'_, Runtime>,
+    downloads: State<'_, Downloads>,
+) -> Result<ModelInfo> {
     let dir = models_dir(&app)?;
     let folder_available = usable_models_dir(&app).is_ok();
     let mut system = sysinfo::System::new();
     system.refresh_memory();
     Ok(ModelInfo {
-        models: models::entries(&dir),
+        models: models::entries(&dir, &downloads),
         ram_gb: total_ram_gb(&system),
         free_ram_gb: models::free_ram_gb(system.total_memory(), system.used_memory(), system.available_memory()),
         free_disk_bytes: models::free_disk_bytes(&dir),

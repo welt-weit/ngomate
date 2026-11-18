@@ -210,6 +210,31 @@ export function fitHistory(history: ChatMessage[], maxChars: number): ChatMessag
 	return history.slice(start)
 }
 
+/**
+ * Drops an exchange that never got an answer, with any tool calls it made, because the run failed or
+ * the window was reloaded while it ran. Some chat templates (Mistral's among them) refuse two user
+ * messages without an answer between them, and then every later message in that conversation fails.
+ */
+export function answeredHistory(history: ChatMessage[]): ChatMessage[] {
+	const kept: ChatMessage[] = []
+	let exchange: ChatMessage[] = []
+	const close = () => {
+		const answered =
+			exchange[0]?.role !== 'user' ||
+			exchange.some(
+				(message) => message.role === 'assistant' && !message.toolCalls?.length && message.content,
+			)
+		if (answered) kept.push(...exchange)
+		exchange = []
+	}
+	for (const message of history) {
+		if (message.role === 'user') close()
+		exchange.push(message)
+	}
+	close()
+	return kept
+}
+
 const REMOVED_RESULT = '[Removed to make room. Call the tool again if you still need this.]'
 
 /** Empties the oldest tool results until the messages fit. Returns whether any had to go. */
@@ -244,6 +269,8 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 	const maxFailuresInARow = options.maxFailuresInARow ?? 3
 	const maxToolResultChars = options.maxToolResultChars ?? 12_000
 	const history = options.history ?? []
+	// What the model is sent. The person's own record keeps every message, answered or not.
+	const sentHistory = answeredHistory(history)
 	const startedAt = performance.now()
 
 	const offered = await tools.listTools()
@@ -337,7 +364,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 				.filter(Boolean)
 				.join('\n\n'),
 		},
-		...history,
+		...sentHistory,
 		{
 			role: 'user',
 			content: [
@@ -383,11 +410,11 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 					sources.length > suppliedSources)
 					? checkFigures(answer, sources)
 					: [],
-			messages: messages
-				.slice(1)
-				.map((message, index) =>
-					index === history.length ? { role: 'user' as const, content: input } : message,
-				),
+			messages: [
+				...history,
+				{ role: 'user' as const, content: input },
+				...messages.slice(sentHistory.length + 2),
+			],
 			cutOff,
 			toolsDidNotFit: choice.didNotFit,
 			promptTokens: sawUsage ? promptTokens : null,
@@ -403,23 +430,23 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		cutOff = reply.cutOff === true
 	}
 	const isCancelled = () => options.signal?.aborted === true
-	// One last turn with no tools, so a stopped run still tells the person where it got to.
+	// One last turn with no tools, so a stopped run still tells the person where it got to. The request
+	// goes in the system text: as a user message straight after a tool result, templates that want user
+	// and assistant to alternate refuse the whole request.
 	const wrapUp = async (status: TaskRun['status'], turns: number): Promise<TaskRun> => {
-		messages.push({ role: 'user', content: WRAP_UP })
+		const [system, ...rest] = messages
 		try {
 			const reply = await model.chat({
-				messages,
+				messages: [{ role: 'system', content: `${system?.content ?? ''}\n\n${WRAP_UP}` }, ...rest],
 				tools: [],
 				onText: options.onText,
 				signal: options.signal,
 				maxOutputTokens: options.maxOutputTokens,
 			})
 			count(reply)
-			messages.pop()
 			if (reply.content) messages.push({ role: 'assistant', content: reply.content })
 			return finish(status, turns, reply.content)
 		} catch {
-			messages.pop()
 			return finish(status, turns, null)
 		}
 	}

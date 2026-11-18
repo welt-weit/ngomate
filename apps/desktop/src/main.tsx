@@ -8,6 +8,8 @@ import { relaunch } from '@tauri-apps/plugin-process'
 import { check } from '@tauri-apps/plugin-updater'
 import { StrictMode, useMemo } from 'react'
 import { createRoot } from 'react-dom/client'
+import logoDark from './assets/mark-dark.svg'
+import logoLight from './assets/mark-light.svg'
 
 const taskFiles = import.meta.glob<string>('./tasks/*.md', {
 	query: '?raw',
@@ -51,7 +53,11 @@ async function checkForUpdate(): Promise<AvailableUpdate | null> {
 
 function App() {
 	const host = useMemo(
-		() => ({ ...createTauriHost({ appName: 'NGOmate', tasks }), checkForUpdate }),
+		() => ({
+			...createTauriHost({ appName: 'NGOmate', tasks }),
+			logo: { light: logoLight, dark: logoDark },
+			checkForUpdate,
+		}),
 		[],
 	)
 	return <NgomateApp host={host} />

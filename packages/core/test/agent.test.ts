@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { type TaskProfile, runTask } from '../src/agent.js'
+import { type TaskProfile, answeredHistory, runTask } from '../src/agent.js'
 import type { ToolSource } from '../src/mcp.js'
 import {
 	type ModelClient,
@@ -200,6 +200,89 @@ describe('runTask', () => {
 		const run = await runTask({ model, tools: source().tools, profile, input: 'go', maxTurns: 2 })
 		expect(run.status).toBe('max_turns')
 		expect(run.answer).toBeNull()
+	})
+
+	// Mistral's chat template: after the system text, user and assistant alternate, apart from tool calls
+	// and their results. A request that breaks it is refused whole.
+	const alternates = (messages: { role: string; toolCalls?: unknown[] }[]) =>
+		messages
+			.filter(
+				(message) =>
+					message.role === 'user' || (message.role === 'assistant' && !message.toolCalls?.length),
+			)
+			.every((message, index) => (message.role === 'user') === (index % 2 === 0))
+
+	it('leaves a question that never got an answer out of what the model is sent, but keeps it', async () => {
+		const { model, chat } = scripted(reply([], 'Here are three funds.'))
+		const history = [
+			{ role: 'user' as const, content: 'Hello' },
+			{ role: 'assistant' as const, content: 'Hi.' },
+			{ role: 'user' as const, content: 'find funding' },
+		]
+		const run = await runTask({
+			model,
+			tools: source().tools,
+			profile,
+			input: 'find funding',
+			history,
+		})
+		const sent = (chat.mock.calls[0] as unknown as [{ messages: { role: string }[] }])[0].messages
+		expect(alternates(sent.slice(1))).toBe(true)
+		// The run adds its answer to the same list afterwards, so only what came before it was sent.
+		expect(sent.slice(1, 4).map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+		expect(run.messages.map((message) => message.content)).toEqual([
+			'Hello',
+			'Hi.',
+			'find funding',
+			'find funding',
+			'Here are three funds.',
+		])
+	})
+
+	it('also leaves out a question whose run stopped after a tool call, with that call', () => {
+		const history = [
+			{ role: 'user' as const, content: 'Hello' },
+			{ role: 'assistant' as const, content: 'Hi.' },
+			{ role: 'user' as const, content: 'find funding' },
+			{
+				role: 'assistant' as const,
+				content: null,
+				toolCalls: [{ id: 'c', name: 'search', arguments: '{}' }],
+			},
+			{ role: 'tool' as const, toolCallId: 'c', content: 'result' },
+			{ role: 'user' as const, content: 'and grants?' },
+			{
+				role: 'assistant' as const,
+				content: null,
+				toolCalls: [{ id: 'd', name: 'search', arguments: '{}' }],
+			},
+			{ role: 'tool' as const, toolCallId: 'd', content: 'result' },
+			{ role: 'assistant' as const, content: 'Two grants.' },
+		]
+		expect(answeredHistory(history).map((message) => message.content)).toEqual([
+			'Hello',
+			'Hi.',
+			'and grants?',
+			null,
+			'result',
+			'Two grants.',
+		])
+	})
+
+	it('asks for the closing answer at the turn limit without breaking the order of roles', async () => {
+		const looping = reply([{ name: 'search', arguments: '{}' }])
+		const { model, chat } = scripted(
+			looping,
+			looping,
+			reply([], 'I searched twice and found nothing.'),
+		)
+		const run = await runTask({ model, tools: source().tools, profile, input: 'go', maxTurns: 2 })
+		const last = (
+			chat.mock.calls[2] as unknown as [{ messages: { role: string; content: string }[] }]
+		)[0].messages
+		expect(alternates(last.slice(1))).toBe(true)
+		expect(last[0]?.content).toContain('Stop using tools now.')
+		expect(run.answer).toBe('I searched twice and found nothing.')
 	})
 
 	it('reports a model failure as a result, not a throw', async () => {

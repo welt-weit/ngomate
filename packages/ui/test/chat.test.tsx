@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ChatRequest, ModelClient, ModelReply, ToolSource } from '@ngomate/core'
-import { cleanup, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { connectionProblem, splitCommand } from '../src/AddonsPanel.js'
@@ -400,6 +400,45 @@ describe('chat', () => {
 		await waitFor(() => expect([...conversations.values()][0]?.messages[0]?.content).toBe('Hi'))
 	})
 
+	it('offers Retry on a question that got no answer, and answers it in place', async () => {
+		const replies: ModelReply[] = []
+		const { host, conversations } = makeHost(replies)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Find funding')
+		await screen.findByRole('alert')
+		expect(await screen.findByText('No answer')).toBeTruthy()
+		replies.push(say('Here are two funds.'))
+		await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+		await screen.findByText('Here are two funds.')
+		expect(screen.queryByText('No answer')).toBeNull()
+		await waitFor(() => {
+			const saved = [...conversations.values()][0]
+			expect(saved?.messages.map((message) => message.content)).toEqual([
+				'Find funding',
+				'Here are two funds.',
+			])
+			expect(Object.keys(saved?.times ?? {})).toEqual(['0', '1'])
+		})
+	})
+
+	it('shows when each message was sent, and keeps Copy and Save in the message menu', async () => {
+		const { host } = makeHost([say('Done.')])
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Hi')
+		await screen.findByText('Done.')
+		expect(document.querySelectorAll('.ngm-messages time')).toHaveLength(2)
+		const menus = screen.getAllByRole('button', { name: 'More actions' })
+		await userEvent.click(menus[1] as HTMLElement)
+		const menu = within(document.querySelector('.ngm-menu-list') as HTMLElement)
+		expect(menu.getAllByRole('button').map((button) => button.textContent)).toEqual([
+			'Copy',
+			'Save as file',
+			'Retry',
+		])
+		await userEvent.keyboard('{Escape}')
+		expect(screen.queryByRole('button', { name: 'Save as file' })).toBeNull()
+	})
+
 	it('carries on without a connector that cannot be reached, and names it', async () => {
 		const addon = {
 			id: 'a',
@@ -489,6 +528,58 @@ describe('chat', () => {
 			expect.objectContaining({ query: 'How do we restore soil?' }),
 		)
 		expect(await screen.findByText(/Looked up in the knowledge base: Soil guide/)).toBeTruthy()
+	})
+
+	it('tells the model which services are connected, so it can say so without a search', async () => {
+		const callTool = vi.fn()
+		const source: ToolSource = {
+			listTools: async () => [
+				{
+					name: 'search_knowledge',
+					description: 'Find',
+					inputSchema: {},
+					annotations: { readOnly: true },
+				},
+			],
+			callTool,
+			close: async () => {},
+		}
+		const addon = (name: string, enabled: boolean) => ({
+			id: name,
+			name,
+			connection: { kind: 'http' as const, url: 'https://x.example' },
+			enabled,
+			allowDestructive: false,
+		})
+		const { host, chat } = makeHost(
+			[say('Yes, I am connected to Field Network.')],
+			{ addons: [addon('Field Network', true), addon('Old Wiki', false)] },
+			{ connectAddon: async () => source },
+		)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Are you connected to Field Network?')
+		await screen.findByText('Yes, I am connected to Field Network.')
+		const system = chat.mock.calls[0]?.[0].messages[0]?.content ?? ''
+		expect(system).toContain(
+			'You are connected to these services through their tools: Field Network.',
+		)
+		expect(system).not.toContain('Old Wiki')
+		expect(callTool).not.toHaveBeenCalled()
+	})
+
+	it('shows the mark beside the app name when the host has one, and the name alone otherwise', async () => {
+		const { host } = makeHost([])
+		const { container, unmount } = render(
+			<NgomateApp host={{ ...host, logo: { light: '/l.svg', dark: '/d.svg' } }} />,
+		)
+		expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('NGOmate')
+		// Beside the name it is decoration, so a screen reader reads the name once.
+		expect(container.querySelector('.ngm-brand img')?.getAttribute('alt')).toBe('')
+		expect(container.querySelector('.ngm-brand img')?.getAttribute('src')).toBe('/l.svg')
+		unmount()
+		const plain = render(<NgomateApp host={host} />)
+		expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('NGOmate')
+		expect(plain.container.querySelector('.ngm-brand img')).toBeNull()
 	})
 
 	it('searches before every message for a model that seldom asks', async () => {

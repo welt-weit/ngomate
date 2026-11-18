@@ -31,10 +31,17 @@ pub struct ModelEntry {
     pub min_ram_gb: u64,
     pub installed: bool,
     pub partial_bytes: u64,
+    /// Where a download running right now has got to. The window that started it may have been closed.
+    pub download: Option<Progress>,
+}
+
+struct Active {
+    cancelled: Arc<AtomicBool>,
+    latest: Option<Progress>,
 }
 
 #[derive(Default)]
-pub struct Downloads(Mutex<HashMap<String, Arc<AtomicBool>>>);
+pub struct Downloads(Mutex<HashMap<String, Active>>);
 
 /// Held while the model folder changes. Nothing may read or write models until it is done, or a file
 /// ends up stranded in the folder that was just left.
@@ -72,8 +79,26 @@ impl Downloads {
             return Err(Error::msg("This model is already downloading."));
         }
         let cancelled = Arc::new(AtomicBool::new(false));
-        active.insert(id.to_string(), cancelled.clone());
+        active.insert(id.to_string(), Active { cancelled: cancelled.clone(), latest: None });
         Ok(cancelled)
+    }
+
+    fn record(&self, progress: &Progress) {
+        if let Some(active) = self.0.lock().unwrap().get_mut(&progress.id) {
+            active.latest = Some(progress.clone());
+        }
+    }
+
+    /// A download that has begun but not reported yet shows as just started.
+    fn progress(&self, model: &Model) -> Option<Progress> {
+        self.0.lock().unwrap().get(model.id).map(|active| {
+            active.latest.clone().unwrap_or_else(|| Progress {
+                id: model.id.to_string(),
+                received_bytes: 0,
+                total_bytes: model.size_bytes,
+                phase: "downloading",
+            })
+        })
     }
 
     fn end(&self, id: &str) {
@@ -85,8 +110,8 @@ impl Downloads {
     }
 
     pub fn cancel(&self, id: &str) {
-        if let Some(flag) = self.0.lock().unwrap().get(id) {
-            flag.store(true, Ordering::SeqCst);
+        if let Some(active) = self.0.lock().unwrap().get(id) {
+            active.cancelled.store(true, Ordering::SeqCst);
         }
     }
 }
@@ -99,7 +124,7 @@ fn partial_path(dir: &Path, model: &Model) -> PathBuf {
     dir.join(format!("{}.part", model.file))
 }
 
-pub fn entries(dir: &Path) -> Vec<ModelEntry> {
+pub fn entries(dir: &Path, downloads: &Downloads) -> Vec<ModelEntry> {
     catalog::MODELS
         .iter()
         .map(|model| ModelEntry {
@@ -111,6 +136,7 @@ pub fn entries(dir: &Path) -> Vec<ModelEntry> {
             min_ram_gb: model.min_ram_gb,
             installed: installed_path(dir, model).exists(),
             partial_bytes: std::fs::metadata(partial_path(dir, model)).map(|m| m.len()).unwrap_or(0),
+            download: downloads.progress(model),
         })
         .collect()
 }
@@ -165,12 +191,16 @@ pub fn free_disk_bytes(dir: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-async fn hash_file(path: &Path, on_read: impl Fn(u64)) -> Result<String> {
+/// None when `cancelled` was set partway.
+async fn hash_file(path: &Path, cancelled: &AtomicBool, on_read: impl Fn(u64)) -> Result<Option<String>> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1024 * 1024];
     let mut total = 0u64;
     loop {
+        if cancelled.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
         let read = file.read(&mut buffer).await?;
         if read == 0 {
             break;
@@ -179,17 +209,19 @@ async fn hash_file(path: &Path, on_read: impl Fn(u64)) -> Result<String> {
         total += read as u64;
         on_read(total);
     }
-    Ok(hex::encode(hasher.finalize()))
+    Ok(Some(hex::encode(hasher.finalize())))
 }
 
 /// A checksum failure deletes the file: resuming a corrupt download only keeps it corrupt.
+/// Paused partway, the file stays as it is and is checked again on Resume.
 async fn verify_and_install(
     partial: &Path,
     target: &Path,
     expected: &str,
+    cancelled: &AtomicBool,
     on_read: impl Fn(u64),
 ) -> Result<()> {
-    let actual = hash_file(partial, on_read).await?;
+    let Some(actual) = hash_file(partial, cancelled, on_read).await? else { return Ok(()) };
     if actual != expected {
         tokio::fs::remove_file(partial).await?;
         return Err(Error::msg(
@@ -219,7 +251,11 @@ pub async fn download(
     on_progress: impl Fn(Progress),
 ) -> Result<()> {
     let cancelled = downloads.begin(model.id)?;
-    let result = run_download(dir, &cancelled, model, url, &on_progress).await;
+    let report = |progress: Progress| {
+        downloads.record(&progress);
+        on_progress(progress);
+    };
+    let result = run_download(dir, &cancelled, model, url, &report).await;
     downloads.end(model.id);
     result
 }
@@ -292,7 +328,7 @@ async fn run_download(
     }
 
     report(0, "verifying");
-    verify_and_install(&partial, &target, model.sha256, |read| {
+    verify_and_install(&partial, &target, model.sha256, cancelled, |read| {
         if read % (256 * 1024 * 1024) < 1024 * 1024 {
             report(read, "verifying");
         }
@@ -307,7 +343,7 @@ pub async fn import(dir: &Path, model: &Model, source: &Path) -> Result<()> {
     if size != model.size_bytes {
         return Err(Error::msg(format!("That file is not {}: its size is different.", model.name)));
     }
-    if hash_file(source, |_| {}).await? != model.sha256 {
+    if hash_file(source, &AtomicBool::new(false), |_| {}).await?.as_deref() != Some(model.sha256) {
         return Err(Error::msg(format!("That file is not {}: its checksum is different.", model.name)));
     }
     if let Some(problem) = disk_problem(size, free_disk_bytes(dir)) {
@@ -515,6 +551,32 @@ mod tests {
         assert!(downloads.begin("a").is_err());
         downloads.end("a");
         assert!(downloads.begin("a").is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_running_download_can_be_read_back_by_a_window_that_did_not_start_it() {
+        let downloads = Downloads::default();
+        let target = model(BODY);
+        assert!(downloads.progress(&target).is_none());
+        let _cancelled = downloads.begin("test").unwrap();
+        let started = downloads.progress(&target).unwrap();
+        assert_eq!((started.received_bytes, started.phase), (0, "downloading"));
+        downloads.record(&Progress { id: "test".into(), received_bytes: 7, total_bytes: 9, phase: "verifying" });
+        let latest = downloads.progress(&target).unwrap();
+        assert_eq!((latest.received_bytes, latest.phase), (7, "verifying"));
+        downloads.end("test");
+        assert!(downloads.progress(&target).is_none());
+    }
+
+    #[tokio::test]
+    async fn pausing_while_checking_keeps_the_file_for_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = model(BODY);
+        let (partial, installed) = (partial_path(dir.path(), &target), installed_path(dir.path(), &target));
+        std::fs::write(&partial, BODY).unwrap();
+        verify_and_install(&partial, &installed, target.sha256, &AtomicBool::new(true), |_| {}).await.unwrap();
+        assert!(partial.exists());
+        assert!(!installed.exists());
     }
 
     #[tokio::test]

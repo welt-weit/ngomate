@@ -55,6 +55,8 @@ const CHAT_PROFILE: TaskProfile = {
 		'You help the staff of a nonprofit organization with their back-office work. Use the tools only when ' +
 		'they are needed. Search the knowledge base for questions about how others have done this kind of ' +
 		'work or what is known in the field, not for writing, translating, lists, general knowledge or small talk. ' +
+		'Questions about you, the services you are connected to or what you can do, answer from what you are told ' +
+		'here, without a tool. ' +
 		'For facts about the organization, its people, funders, deadlines and amounts, use only material the ' +
 		'person gave you or a tool returned, and if they are not in it, say so. General knowledge and writing ' +
 		'you may give yourself, without presenting them as coming from a tool.',
@@ -67,6 +69,20 @@ const STOPPED: Partial<Record<TaskRun['status'], string>> = {
 	stuck: 'Stopped because its tool calls kept failing.',
 	call_limit: 'Stopped at the limit on tool calls for one request.',
 	max_turns: 'Stopped because the request took too many steps.',
+}
+
+/**
+ * Which services the model can reach, by name. Without it, "are you connected to X?" has no answer but
+ * a search, and a search for that finds field passages that have nothing to do with it.
+ */
+export function connectedServices(addons: { name: string; enabled: boolean }[]): string {
+	const names = addons
+		.filter((addon) => addon.enabled)
+		.map((addon) => addon.name.trim())
+		.filter(Boolean)
+	return names.length
+		? `You are connected to these services through their tools: ${names.join(', ')}.`
+		: ''
 }
 
 export function makeTitle(text: string): string {
@@ -216,7 +232,9 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	)
 
 	const send = useCallback(
-		async (text: string, options: SendOptions = {}) => {
+		async (text: string, options: SendOptions = {}, from?: Conversation) => {
+			// Retry starts from the conversation without its last question, which this render has not seen yet.
+			const current = from ?? conversation
 			const { task, documents = [], prompt } = options
 			const request = [prompt?.text, text].filter(Boolean).join('\n\n')
 			const named = documents.length
@@ -225,7 +243,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 			// What is kept and shown. The documents themselves go with each message, as far as it needs them.
 			const input = [request, named].filter(Boolean).join('\n\n')
 			// The same file attached twice would only divide the room between two copies.
-			const allDocuments = [...(conversation.documents ?? []), ...documents].filter(
+			const allDocuments = [...(current.documents ?? []), ...documents].filter(
 				(document, index, all) =>
 					all.findIndex((other) => other.name === document.name && other.text === document.text) ===
 					index,
@@ -259,17 +277,19 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				flushTimer = null
 				setStreaming(written)
 			}
-			const title = conversation.messages.length
-				? conversation.title
+			const title = current.messages.length
+				? current.title
 				: makeTitle(prompt?.title ?? task?.title ?? (text || documents[0]?.name || ''))
-			const asked = [...conversation.messages, { role: 'user' as const, content: input }]
+			const asked = [...current.messages, { role: 'user' as const, content: input }]
+			const times = { ...current.times, [current.messages.length]: new Date().toISOString() }
 			try {
 				// Saved before anything can fail, because the composer has already been cleared.
 				await save({
-					...conversation,
+					...current,
 					title,
 					updatedAt: new Date().toISOString(),
 					messages: asked,
+					times,
 					documents: allDocuments,
 				})
 
@@ -286,7 +306,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				const each = Math.floor((room.document * share) / Math.max(1, allDocuments.length))
 				const blocks = allDocuments.map((document) => ({
 					name: document.name,
-					...documentBlock(document, passageQuery(request, conversation.messages), each),
+					...documentBlock(document, passageQuery(request, current.messages), each),
 					truncated: document.truncated,
 				}))
 				const attachments = blocks.map((block) => block.text).join('\n\n')
@@ -314,7 +334,11 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					})
 
 				const memory = await buildMemoryContext(host.memory, room.memory).catch(() => '')
-				const context = [`Today is ${new Date().toISOString().slice(0, 10)}.`, memory]
+				const context = [
+					`Today is ${new Date().toISOString().slice(0, 10)}.`,
+					connectedServices(depsRef.current.settings.addons),
+					memory,
+				]
 					.filter(Boolean)
 					.join('\n\n')
 				// Open chat only: a ready-made task has its own material and every token spoken for. The model
@@ -324,13 +348,13 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				const knowledge =
 					!task && text.trim() && depsRef.current.settings.addons.some((addon) => addon.enabled)
 						? {
-								query: passageQuery(text, conversation.messages),
+								query: passageQuery(text, current.messages),
 								maxChars: room.knowledge,
 								onRequest: !searchKnowledgeFirst,
 							}
 						: undefined
 				const history: ChatMessage[] = fitHistory(
-					conversation.messages,
+					current.messages,
 					Math.max(
 						0,
 						room.input -
@@ -382,15 +406,12 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				if (run.status === 'model_error') setError(run.error ?? 'The model did not answer.')
 
 				// Older messages were left out of what the model saw, but stay in what is kept.
-				const earlier = conversation.messages.slice(
-					0,
-					conversation.messages.length - history.length,
-				)
+				const earlier = current.messages.slice(0, current.messages.length - history.length)
 				const messages = [...earlier, ...run.messages]
 				// Stopping keeps what was already written: it may be all the person wanted.
 				if (run.status === 'cancelled' && written.trim())
 					messages.push({ role: 'assistant', content: written })
-				const notices = { ...conversation.notices }
+				const notices = { ...current.notices }
 				if (run.answer) {
 					const notice: AnswerNotice = {
 						unsourcedDates: run.unsourcedDates,
@@ -398,7 +419,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						checkFigures: Boolean(task) && task?.tools === 'none',
 						figureProblems: run.figureProblems,
 						stopped: STOPPED[run.status] ?? null,
-						earlierLeftOut: history.length < conversation.messages.length,
+						earlierLeftOut: history.length < current.messages.length,
 						partlyRead: blocks.filter((block) => block.cut).map((block) => block.name),
 						neverRead: blocks.filter((block) => block.truncated).map((block) => block.name),
 						cutOff: run.cutOff,
@@ -407,15 +428,17 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						knowledgeUnavailable: run.knowledgeUnavailable,
 					}
 					notices[messages.length - 1] = notice
+					times[messages.length - 1] = new Date().toISOString()
 				} else if (STOPPED[run.status]) {
 					setError(STOPPED[run.status] ?? null)
 				}
 				await save({
-					...conversation,
+					...current,
 					title,
 					updatedAt: new Date().toISOString(),
 					messages,
 					notices,
+					times,
 					documents: allDocuments,
 				})
 			} catch (err) {
@@ -435,6 +458,28 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	)
 
 	const stop = useCallback(() => abort.current?.abort(), [])
+
+	/**
+	 * Sends the last question again, in place of its answer, or of the answer it never got. It goes as
+	 * a plain message: a ready-made task it was asked through is not kept with the conversation.
+	 */
+	const retry = useCallback(() => {
+		const at = conversation.messages.findLastIndex((message) => message.role === 'user')
+		const question = conversation.messages[at]
+		if (at < 0 || !question?.content) return
+		const before = <T>(record: Record<number, T> = {}) =>
+			Object.fromEntries(Object.entries(record).filter(([index]) => Number(index) < at))
+		return send(
+			question.content,
+			{},
+			{
+				...conversation,
+				messages: conversation.messages.slice(0, at),
+				notices: before(conversation.notices),
+				times: before(conversation.times),
+			},
+		)
+	}, [conversation, send])
 
 	/** Takes a document out of the conversation, so it is not sent with any later message. */
 	const removeDocument = useCallback(
@@ -458,6 +503,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 		problems,
 		pendingWrite,
 		send,
+		retry,
 		stop,
 		removeDocument,
 	}

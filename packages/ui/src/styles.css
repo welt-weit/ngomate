@@ -88,8 +88,17 @@
 }
 
 .ngm-brand {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	margin: 0 0 10px;
 	font-size: 18px;
+}
+
+.ngm-brand img {
+	display: block;
+	height: 28px;
+	width: auto;
 }
 
 .ngm-side-title {
@@ -105,6 +114,7 @@
 	flex-direction: column;
 	gap: 2px;
 	min-height: 0;
+	overflow-x: hidden;
 	overflow-y: auto;
 }
 
@@ -115,6 +125,14 @@
 
 .ngm-side-item > :first-child {
 	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ngm-side-item > :not(:first-child) {
+	flex: 0 0 auto;
 }
 
 .ngm-update {
@@ -171,6 +189,92 @@
 	overflow-y: auto;
 }
 
+.ngm-panes {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+.ngm-panes[hidden] {
+	display: none;
+}
+
+.ngm-pane {
+	display: flex;
+	flex: 1 1 0;
+	flex-direction: column;
+	min-width: 280px;
+	min-height: 0;
+}
+
+.ngm-pane + .ngm-pane {
+	border-left: 1px solid var(--ngm-line);
+}
+
+.ngm-tabs {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: stretch;
+	gap: 2px;
+	padding: 4px 6px 0;
+	overflow-x: auto;
+	background: var(--ngm-panel);
+	border-bottom: 1px solid var(--ngm-line);
+}
+
+.ngm-tab {
+	display: flex;
+	align-items: center;
+	max-width: 220px;
+	border: 1px solid transparent;
+	border-bottom: none;
+	border-radius: var(--ngm-radius) var(--ngm-radius) 0 0;
+}
+
+.ngm-tab-active {
+	background: var(--ngm-bg);
+	border-color: var(--ngm-line);
+	margin-bottom: -1px;
+}
+
+.ngm-pane-focused .ngm-tab-active {
+	box-shadow: inset 0 2px 0 var(--ngm-accent, currentColor);
+}
+
+.ngm-tab-title,
+.ngm-tab-close,
+.ngm-tab-add {
+	padding: 6px 8px;
+	font: inherit;
+	font-size: 13px;
+	color: inherit;
+	cursor: pointer;
+	background: none;
+	border: none;
+}
+
+.ngm-tab-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ngm-tab:not(.ngm-tab-active) .ngm-tab-title,
+.ngm-tab-close,
+.ngm-tab-add {
+	color: var(--ngm-muted);
+}
+
+.ngm-tab-close:hover,
+.ngm-tab-add:hover:not(:disabled) {
+	color: inherit;
+}
+
+.ngm-tab-add:disabled {
+	cursor: default;
+	opacity: 0.4;
+}
+
 .ngm-chat-holder {
 	display: flex;
 	flex: 1;
@@ -195,9 +299,7 @@
 	flex-direction: column;
 	gap: 12px;
 	width: 100%;
-	max-width: 800px;
 	padding: 24px;
-	margin: 0 auto;
 	overflow-y: auto;
 }
 
@@ -362,9 +464,7 @@
 
 .ngm-composer {
 	width: 100%;
-	max-width: 800px;
 	padding: 0 24px 16px;
-	margin: 0 auto;
 }
 
 .ngm-composer textarea {
@@ -403,8 +503,43 @@
 	flex: 1;
 }
 
-.ngm-answer-actions {
+.ngm-user-turn {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	align-self: stretch;
+}
+
+.ngm-message-meta {
+	gap: 6px;
 	margin-top: 4px;
+	font-size: 12px;
+	color: var(--ngm-muted);
+}
+
+.ngm-menu {
+	position: relative;
+}
+
+.ngm-menu-list {
+	position: absolute;
+	z-index: 10;
+	top: 100%;
+	right: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	min-width: 140px;
+	padding: 4px;
+	background: var(--ngm-bg);
+	border: 1px solid var(--ngm-line);
+	border-radius: 8px;
+	box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+.ngm-menu-list button {
+	justify-content: flex-start;
+	text-align: left;
 }
 
 .ngm-panel {

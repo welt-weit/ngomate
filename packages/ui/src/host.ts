@@ -18,6 +18,8 @@ export type ModelEntry = {
 	installed: boolean
 	/** Bytes already downloaded when a download stopped partway. */
 	partialBytes: number
+	/** A download running now, also when this window did not start it. */
+	download: DownloadProgress | null
 }
 
 export type ModelInfo = {
@@ -58,9 +60,7 @@ export interface ModelHost {
 	 * `searchKnowledgeFirst`: in chat, search a connected knowledge base before every message rather than
 	 * when the model asks, for a model that seldom asks.
 	 */
-	start(
-		id: string,
-	): Promise<{
+	start(id: string): Promise<{
 		baseUrl: string
 		apiKey: string
 		contextTokens: number
@@ -107,6 +107,8 @@ export type Conversation = {
 	documents?: PickedDocument[]
 	/** What to show beside an answer, keyed by the answer's position in `messages`. */
 	notices: Record<number, AnswerNotice>
+	/** When each message was sent or answered, keyed by position. Missing on messages kept before this. */
+	times?: Record<number, string>
 }
 
 export type AnswerNotice = {
@@ -154,6 +156,8 @@ export type AvailableUpdate = {
  */
 export interface NgomateHost {
 	appName: string
+	/** Image addresses of the app's mark for a light and a dark background, shown beside its name. */
+	logo?: { light: string; dark: string }
 	tasks: TaskFile[]
 	memory: MemoryStore
 	loadSettings(): Promise<Settings>

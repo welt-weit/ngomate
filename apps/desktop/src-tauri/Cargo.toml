@@ -26,6 +26,10 @@ tauri-plugin-ngomate = { path = "../../../packages/tauri" }
 
 # Small over fast: the app waits on the model, not on this code. Unwinding stays on, because reading a
 # broken PDF relies on catching a panic.
+# Checking a downloaded model reads gigabytes; unoptimized, that takes minutes in a dev build.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.release]
 opt-level = "s"
 lto = true
