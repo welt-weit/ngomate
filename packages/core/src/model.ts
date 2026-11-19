@@ -18,6 +18,23 @@ export type ToolDefinition = {
 	annotations?: { readOnly?: boolean; destructive?: boolean }
 }
 
+/**
+ * Where the time of one model call went. The token figures come from llama-server's own report; other
+ * servers do not send it, so they are null there.
+ */
+export type ModelTiming = {
+	/** From sending the request until the first piece of answer or tool call arrived. */
+	firstMs: number | null
+	totalMs: number
+	/** Prompt tokens read for this call, and those reused from the call before, which cost nothing. */
+	promptRead: number | null
+	promptReused: number | null
+	/** Time spent reading the prompt, before anything could be written. */
+	promptMs: number | null
+	/** Speed of writing the answer. */
+	tokensPerSecond: number | null
+}
+
 export type ModelReply = {
 	content: string | null
 	toolCalls: ToolCall[]
@@ -25,6 +42,7 @@ export type ModelReply = {
 	completionTokens: number | null
 	/** The answer stopped at the length limit, not because it was finished. */
 	cutOff?: boolean
+	timing?: ModelTiming
 }
 
 export type ChatRequest = {
@@ -70,6 +88,37 @@ type WireReply = {
 		}
 	}[]
 	usage?: { prompt_tokens?: number; completion_tokens?: number }
+	timings?: WireTimings
+}
+
+/** llama-server's report on a request, sent with the reply and in the last piece of a stream. */
+type WireTimings = {
+	cache_n?: number
+	prompt_n?: number
+	prompt_ms?: number
+	predicted_per_second?: number
+}
+
+const finite = (value: unknown): number | null =>
+	typeof value === 'number' && Number.isFinite(value) ? value : null
+
+function toTiming(
+	timings: WireTimings | undefined,
+	firstMs: number | null,
+	totalMs: number,
+): ModelTiming {
+	const round = (value: number | null) => (value === null ? null : Math.round(value))
+	return {
+		firstMs: round(firstMs),
+		totalMs: Math.round(totalMs),
+		promptRead: finite(timings?.prompt_n),
+		promptReused: finite(timings?.cache_n),
+		promptMs: round(finite(timings?.prompt_ms)),
+		tokensPerSecond: (() => {
+			const speed = finite(timings?.predicted_per_second)
+			return speed === null ? null : Math.round(speed * 10) / 10
+		})(),
+	}
 }
 
 /** Reasoning models put their thinking in the content. It is not an answer, and must not count as one. */
@@ -128,13 +177,18 @@ export function createThinkingFilter(emit: (text: string) => void): (piece: stri
 	}
 }
 
-async function readStream(response: Response, onText: (text: string) => void): Promise<WireReply> {
+async function readStream(
+	response: Response,
+	onText: (text: string) => void,
+	onFirst: () => void,
+): Promise<WireReply> {
 	if (!response.body) throw new Error('Model endpoint returned no stream')
 	const emit = createThinkingFilter(onText)
 	const decoder = new TextDecoder()
 	const toolCalls = new Map<number, { id?: string; name: string; arguments: string }>()
 	let content = ''
 	let usage: WireReply['usage']
+	let timings: WireTimings | undefined
 	let finishReason: string | null = null
 	let pending = ''
 
@@ -148,10 +202,13 @@ async function readStream(response: Response, onText: (text: string) => void): P
 				delta?: { content?: string | null; tool_calls?: WireToolCall[] }
 			}[]
 			usage?: WireReply['usage']
+			timings?: WireTimings
 		}
 		if (chunk.usage) usage = chunk.usage
+		if (chunk.timings) timings = chunk.timings
 		finishReason = chunk.choices?.[0]?.finish_reason ?? finishReason
 		const delta = chunk.choices?.[0]?.delta
+		if (delta?.content || delta?.tool_calls?.length) onFirst()
 		if (delta?.content) {
 			content += delta.content
 			emit(delta.content)
@@ -193,6 +250,7 @@ async function readStream(response: Response, onText: (text: string) => void): P
 			},
 		],
 		usage,
+		timings,
 	}
 }
 
@@ -209,6 +267,8 @@ export function createOpenAiCompatibleClient(options: OpenAiCompatibleOptions): 
 			const timer = setTimeout(abort, options.timeoutMs ?? 600_000)
 			if (signal?.aborted) abort()
 			signal?.addEventListener('abort', abort, { once: true })
+			const sentAt = performance.now()
+			const first: { ms: number | null } = { ms: null }
 			try {
 				const response = await doFetch(url, {
 					method: 'POST',
@@ -253,7 +313,9 @@ export function createOpenAiCompatibleClient(options: OpenAiCompatibleOptions): 
 				}
 
 				const body = onText
-					? await readStream(response, onText)
+					? await readStream(response, onText, () => {
+							first.ms ??= performance.now() - sentAt
+						})
 					: ((await response.json()) as WireReply)
 				const message = body.choices?.[0]?.message
 				if (!message) throw new Error('Model endpoint returned no message')
@@ -273,6 +335,7 @@ export function createOpenAiCompatibleClient(options: OpenAiCompatibleOptions): 
 					promptTokens: body.usage?.prompt_tokens ?? null,
 					completionTokens: body.usage?.completion_tokens ?? null,
 					cutOff: body.choices?.[0]?.finish_reason === 'length',
+					timing: toTiming(body.timings, first.ms, performance.now() - sentAt),
 				}
 			} finally {
 				clearTimeout(timer)

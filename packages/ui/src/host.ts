@@ -3,6 +3,7 @@ import type {
 	FigureProblem,
 	MemoryStore,
 	ModelClient,
+	ModelTiming,
 	TaskFile,
 	ToolSource,
 } from '@ngomate/core'
@@ -132,6 +133,20 @@ export type AnswerNotice = {
 	knowledgeEntries?: string[]
 	/** A connected knowledge base did not answer, so this answer was written without it. */
 	knowledgeUnavailable?: boolean
+	/** Where the wait for this answer went. Missing on answers kept before this was measured. */
+	timing?: AnswerTiming
+}
+
+export type AnswerTiming = {
+	/** From pressing Send until the first word showed; null when none did. */
+	firstWordMs: number | null
+	totalMs: number
+	/** Waiting for the model to be ready, which includes loading it when it was not running. */
+	startMs: number
+	/** The knowledge search made before the model was asked; null when none was. */
+	knowledgeMs: number | null
+	toolMs: number
+	modelCalls: ModelTiming[]
 }
 
 export type PickedDocument = {

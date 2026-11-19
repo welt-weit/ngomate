@@ -448,6 +448,35 @@ describe('chat', () => {
 		expect(screen.queryByRole('button', { name: 'Save as file' })).toBeNull()
 	})
 
+	it('keeps where the wait for an answer went, and shows it on the answer time', async () => {
+		const { host, conversations } = makeHost([
+			{
+				...say('Done.'),
+				timing: {
+					firstMs: 900,
+					totalMs: 2000,
+					promptRead: 1830,
+					promptReused: 2100,
+					promptMs: 850,
+					tokensPerSecond: 14.2,
+				},
+			},
+		])
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Hi')
+		await screen.findByText('Done.')
+		await waitFor(() => {
+			const timing = [...conversations.values()][0]?.notices[1]?.timing
+			expect(timing?.modelCalls).toHaveLength(1)
+			expect(timing?.firstWordMs).toBeTypeOf('number')
+		})
+		const shown = document.querySelectorAll('.ngm-messages time')[1]?.getAttribute('title') ?? ''
+		expect(shown).toMatch(/^First words after \d+\.\d s, done after \d+\.\d s/)
+		expect(shown).toContain(
+			'Model call 1: 2.0 s, read 1,830 tokens (2,100 reused) in 0.8 s, wrote 14.2 tokens/s',
+		)
+	})
+
 	it('opens a conversation dragged from the list onto a tab bar, and ignores anything else dropped there', async () => {
 		const { host } = makeHost([say('Done.')])
 		render(<NgomateApp host={host} />)

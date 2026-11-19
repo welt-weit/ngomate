@@ -58,6 +58,30 @@ describe('runTask', () => {
 		expect(request[0].tools.map((tool) => tool.name)).toEqual(['search', 'create'])
 	})
 
+	it('keeps the timing of every model call, and the time its tools took', async () => {
+		const timing = (totalMs: number) => ({
+			firstMs: 1,
+			totalMs,
+			promptRead: 10,
+			promptReused: 0,
+			promptMs: 5,
+			tokensPerSecond: 20,
+		})
+		const { model } = scripted(
+			{ ...reply([{ name: 'search', arguments: '{}' }]), timing: timing(30) },
+			{ ...reply([], 'done'), timing: timing(40) },
+		)
+		const slow = vi.fn(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20))
+			return { text: 'result', isError: false }
+		})
+		const run = await runTask({ model, tools: source(slow).tools, profile, input: 'go' })
+		expect(run.modelCalls.map((call) => call.totalMs)).toEqual([30, 40])
+		expect(run.toolMs).toBeGreaterThanOrEqual(15)
+		// No search was made before the model was asked.
+		expect(run.knowledgeMs).toBeNull()
+	})
+
 	it('refuses a tool outside the profile even when the server offers it', async () => {
 		const { model } = scripted(
 			reply([{ name: 'delete_everything', arguments: '{}' }]),

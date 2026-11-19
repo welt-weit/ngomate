@@ -271,6 +271,9 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 
 			let tools: ToolSource | null = null
 			let written = ''
+			// Where the wait went, kept with the answer so slow answers can be looked into.
+			const sentAt = performance.now()
+			const waited = { startMs: 0, firstWordMs: null as number | null }
 			// Shown in batches: every small piece redrawing the page is too much for a slow computer.
 			let flushTimer: ReturnType<typeof setTimeout> | null = null
 			const flush = () => {
@@ -299,6 +302,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					contextTokens,
 					searchKnowledgeFirst,
 				} = await depsRef.current.getModel().finally(() => setStartingModel(false))
+				waited.startMs = Math.round(performance.now() - sentAt)
 				const room = textBudget(contextTokens)
 				setBudget(room)
 				// A draft needs every fact it can get. A question needs the passages that answer it.
@@ -385,6 +389,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					confirmWrite,
 					signal: controller.signal,
 					onText: (piece) => {
+						waited.firstWordMs ??= Math.round(performance.now() - sentAt)
 						setReadingDocument(false)
 						written += piece
 						flushTimer ??= setTimeout(flush, 60)
@@ -426,6 +431,13 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						toolsDidNotFit: run.toolsDidNotFit,
 						knowledgeEntries: run.knowledgeEntries,
 						knowledgeUnavailable: run.knowledgeUnavailable,
+						timing: {
+							...waited,
+							totalMs: Math.round(performance.now() - sentAt),
+							knowledgeMs: run.knowledgeMs,
+							toolMs: run.toolMs,
+							modelCalls: run.modelCalls,
+						},
 					}
 					notices[messages.length - 1] = notice
 					times[messages.length - 1] = new Date().toISOString()

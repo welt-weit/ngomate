@@ -10,7 +10,7 @@ import {
 } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AnswerNotice, NgomateHost, PickedDocument } from './host.js'
+import type { AnswerNotice, AnswerTiming, NgomateHost, PickedDocument } from './host.js'
 import { usePrimitives } from './primitives.js'
 import { type ChatDeps, type PendingWrite, useChat } from './useChat.js'
 
@@ -172,16 +172,54 @@ function MessageMenu({ items }: { items: MenuItem[] }) {
 	)
 }
 
+const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`
+const count = (n: number) => n.toLocaleString('en')
+
+/** Where the wait for an answer went, one line per step, shown when pointing at its time. */
+export function describeTiming(timing: AnswerTiming): string {
+	const lines = [
+		timing.firstWordMs === null
+			? `No words shown, done after ${seconds(timing.totalMs)}`
+			: `First words after ${seconds(timing.firstWordMs)}, done after ${seconds(timing.totalMs)}`,
+		`Model ready after ${seconds(timing.startMs)}`,
+	]
+	if (timing.knowledgeMs !== null) lines.push(`Knowledge search: ${seconds(timing.knowledgeMs)}`)
+	if (timing.toolMs > 0) lines.push(`Tools: ${seconds(timing.toolMs)}`)
+	timing.modelCalls.forEach((call, index) => {
+		const read =
+			call.promptRead === null
+				? null
+				: `read ${count(call.promptRead)} tokens${call.promptReused ? ` (${count(call.promptReused)} reused)` : ''}${call.promptMs === null ? '' : ` in ${seconds(call.promptMs)}`}`
+		const wrote = call.tokensPerSecond === null ? null : `wrote ${call.tokensPerSecond} tokens/s`
+		lines.push(
+			`Model call ${index + 1}: ${[seconds(call.totalMs), read, wrote].filter(Boolean).join(', ')}`,
+		)
+	})
+	return lines.join('\n')
+}
+
 function MessageMeta({
 	time,
+	timeTitle,
 	onRetry,
 	items,
 	note,
-}: { time?: string; onRetry?: () => void; items: MenuItem[]; note?: string | null }) {
+}: {
+	time?: string
+	/** Shown when pointing at the time. */
+	timeTitle?: string
+	onRetry?: () => void
+	items: MenuItem[]
+	note?: string | null
+}) {
 	const { Button } = usePrimitives()
 	return (
 		<div className="ngm-row ngm-message-meta">
-			{time && <time dateTime={time}>{formatTime(time)}</time>}
+			{time && (
+				<time dateTime={time} title={timeTitle}>
+					{formatTime(time)}
+				</time>
+			)}
 			{note && <span>{note}</span>}
 			{onRetry && (
 				<Button variant="quiet" onClick={onRetry}>
@@ -258,6 +296,7 @@ const MessageView = memo(function MessageView({
 			{notice && <Notice notice={notice} />}
 			<MessageMeta
 				time={time}
+				timeTitle={notice?.timing ? describeTiming(notice.timing) : undefined}
 				items={[
 					copy(text),
 					{

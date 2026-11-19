@@ -8,7 +8,7 @@ import {
 } from './knowledge.js'
 import { extractLinks, findUnsourcedLinks } from './links.js'
 import type { ToolResult, ToolSource } from './mcp.js'
-import type { ChatMessage, ModelClient, ToolCall, ToolDefinition } from './model.js'
+import type { ChatMessage, ModelClient, ModelTiming, ToolCall, ToolDefinition } from './model.js'
 import { chooseTools, compactTool } from './toolChoice.js'
 
 /**
@@ -106,6 +106,12 @@ export type TaskRun = {
 	knowledgeEntries: string[]
 	/** A knowledge base did not answer, so this answer was written without it. */
 	knowledgeUnavailable: boolean
+	/** Each call to the model in this run, in order: where the waiting went. */
+	modelCalls: ModelTiming[]
+	/** The knowledge search made before the model was asked; null when none was. */
+	knowledgeMs: number | null
+	/** Time spent running the tools the model called, a search it asked for included. */
+	toolMs: number
 }
 
 export type RunTaskOptions = {
@@ -314,6 +320,8 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		...suppliedText(history),
 	]
 	const suppliedSources = sources.length
+	const searchStart = performance.now()
+	const searchedFirst = Boolean(options.knowledge && !onRequest)
 	const knowledge =
 		options.knowledge && !onRequest
 			? await (async () => {
@@ -337,6 +345,9 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 					return found
 				})()
 			: { text: '', sources: [], entries: [], unavailable: false }
+	const knowledgeMs = searchedFirst ? Math.round(performance.now() - searchStart) : null
+	const modelCalls: ModelTiming[] = []
+	let toolMs = 0
 	sources.push(...knowledge.sources)
 	const preloaded: string[] = []
 	for (const { tool, args } of profile.preload ?? []) {
@@ -421,6 +432,9 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 			completionTokens: sawUsage ? completionTokens : null,
 			knowledgeEntries: knowledge.entries,
 			knowledgeUnavailable: knowledge.unavailable,
+			modelCalls,
+			knowledgeMs,
+			toolMs: Math.round(toolMs),
 		}
 	}
 	const count = (reply: Awaited<ReturnType<ModelClient['chat']>>) => {
@@ -428,6 +442,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		promptTokens += reply.promptTokens ?? 0
 		completionTokens += reply.completionTokens ?? 0
 		cutOff = reply.cutOff === true
+		if (reply.timing) modelCalls.push(reply.timing)
 	}
 	const isCancelled = () => options.signal?.aborted === true
 	// One last turn with no tools, so a stopped run still tells the person where it got to. The request
@@ -512,7 +527,9 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 				continue
 			}
 			toolCallCount++
+			const callStart = performance.now()
 			const { outcome, text } = await handleCall(call, options, calls, onEvent)
+			toolMs += performance.now() - callStart
 			messages.push({
 				role: 'tool',
 				toolCallId: call.id,

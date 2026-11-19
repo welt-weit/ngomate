@@ -361,6 +361,45 @@ describe('streaming', () => {
 		expect(reply.content).toBe('Hello')
 	})
 
+	it("reports how much of the prompt was read and reused, from llama-server's own report", async () => {
+		const client = createOpenAiCompatibleClient({
+			baseUrl: 'http://x/v1',
+			model: 'm',
+			fetch: stream(
+				piece({ content: 'Hi' }),
+				`data: ${JSON.stringify({
+					choices: [{ delta: {}, finish_reason: 'stop' }],
+					timings: { cache_n: 900, prompt_n: 120, prompt_ms: 812.4, predicted_per_second: 14.26 },
+				})}\n\n`,
+				'data: [DONE]\n\n',
+			),
+		})
+		const { timing } = await client.chat({ messages: [], tools: [], onText: () => {} })
+		expect(timing).toMatchObject({
+			promptRead: 120,
+			promptReused: 900,
+			promptMs: 812,
+			tokensPerSecond: 14.3,
+		})
+		expect(timing?.firstMs).toBeTypeOf('number')
+		expect(timing?.totalMs).toBeGreaterThanOrEqual(timing?.firstMs ?? 0)
+	})
+
+	it('reports only the time where the server sends no report', async () => {
+		const client = createOpenAiCompatibleClient({
+			baseUrl: 'http://x/v1',
+			model: 'm',
+			fetch: stream(piece({ content: 'Hi' }), 'data: [DONE]\n\n'),
+		})
+		const { timing } = await client.chat({ messages: [], tools: [], onText: () => {} })
+		expect(timing).toMatchObject({
+			promptRead: null,
+			promptReused: null,
+			promptMs: null,
+			tokensPerSecond: null,
+		})
+	})
+
 	it('stops when the signal fires, without AbortSignal.any', async () => {
 		const seen: AbortSignal[] = []
 		const client = createOpenAiCompatibleClient({
