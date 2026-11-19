@@ -2,6 +2,7 @@ import type { ChatMessage, PromptDefinition, TaskFile } from '@ngomate/core'
 import {
 	type FormEvent,
 	type KeyboardEvent,
+	type UIEvent,
 	memo,
 	useCallback,
 	useEffect,
@@ -338,10 +339,23 @@ export function Chat({
 		onStarted()
 	}, [start, onStarted])
 
+	/** Follows the end of the chat, until the person scrolls up to read; sending follows it again. */
+	const following = useRef(true)
+	const onScroll = (event: UIEvent<HTMLDivElement>) => {
+		const box = event.currentTarget
+		following.current = box.scrollHeight - box.scrollTop - box.clientHeight < 48
+	}
+	const shownCount = useRef(0)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scrolls when any of these change
 	useEffect(() => {
-		bottom.current?.scrollIntoView?.({ block: 'end' })
+		const { messages } = chat.conversation
+		if (messages.length > shownCount.current && messages.at(-1)?.role === 'user') {
+			following.current = true
+		}
+		shownCount.current = messages.length
+		if (following.current) bottom.current?.scrollIntoView?.({ block: 'end' })
 	}, [chat.conversation.messages.length, chat.streaming, chat.pendingWrite])
+	const whole = Boolean(deps.settings.wholeAnswers)
 
 	const submit = async (event?: FormEvent) => {
 		event?.preventDefault()
@@ -383,7 +397,7 @@ export function Chat({
 	const retry = chat.busy ? undefined : () => void chat.retry()
 	return (
 		<div className="ngm-chat">
-			<div className="ngm-messages" aria-live="polite">
+			<div className="ngm-messages" aria-live="polite" onScroll={onScroll}>
 				{messages.length === 0 && !chat.busy && (
 					<div className="ngm-empty">
 						<h2>What are we working on?</h2>
@@ -410,7 +424,7 @@ export function Chat({
 						onProblem={onProblem}
 					/>
 				))}
-				{chat.streaming && (
+				{chat.streaming && !whole && (
 					<div className="ngm-message ngm-assistant">
 						<Markdown
 							remarkPlugins={[remarkGfm]}
@@ -420,15 +434,17 @@ export function Chat({
 						</Markdown>
 					</div>
 				)}
-				{chat.busy && !chat.streaming && !chat.pendingWrite && (
+				{chat.busy && (!chat.streaming || whole) && !chat.pendingWrite && (
 					<output className="ngm-tool-line ngm-working">
-						{chat.startingModel
-							? 'Starting the model. This can take a minute…'
-							: chat.readingDocument
-								? 'Reading your document. A long one can take a minute…'
-								: chat.activity
-									? `Using ${chat.activity}…`
-									: 'Thinking…'}
+						{chat.streaming
+							? 'Writing the answer…'
+							: chat.startingModel
+								? 'Starting the model. This can take a minute…'
+								: chat.readingDocument
+									? 'Reading your document. A long one can take a minute…'
+									: chat.activity
+										? `Using ${chat.activity}…`
+										: 'Thinking…'}
 					</output>
 				)}
 				{chat.pendingWrite && <WriteConfirmation request={chat.pendingWrite} />}

@@ -240,6 +240,59 @@ describe('chat', () => {
 		expect([...conversations.values()][0]?.messages.at(-1)?.content).toBe('The first part')
 	})
 
+	it('shows an answer only once it is complete, when the person chose that', async () => {
+		const { host, chat } = makeHost([], { wholeAnswers: true })
+		let finish = () => {}
+		chat.mockImplementationOnce(
+			(request: ChatRequest) =>
+				new Promise((resolve) => {
+					request.onText?.('The first part')
+					finish = () => resolve(say('The first part, and the rest.'))
+				}),
+		)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Write')
+		expect(await screen.findByText('Writing the answer…')).toBeTruthy()
+		expect(screen.queryByText('The first part')).toBeNull()
+		finish()
+		expect(await screen.findByText('The first part, and the rest.')).toBeTruthy()
+		expect(screen.queryByText('Writing the answer…')).toBeNull()
+	})
+
+	it('stops following the answer once the person scrolls up, and follows again on the next message', async () => {
+		const scrolled = vi.fn()
+		Element.prototype.scrollIntoView = scrolled
+		const { host, chat } = makeHost([say('Second answer.')])
+		let write: (piece: string) => void = () => {}
+		let finish = () => {}
+		chat.mockImplementationOnce(
+			(request: ChatRequest) =>
+				new Promise((resolve) => {
+					write = (piece) => request.onText?.(piece)
+					finish = () => resolve(say('Start of it and more.'))
+				}),
+		)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Write')
+		write('Start of it')
+		await screen.findByText('Start of it')
+		const list = document.querySelector('.ngm-messages') as HTMLElement
+		Object.defineProperty(list, 'scrollHeight', { value: 2000, configurable: true })
+		Object.defineProperty(list, 'clientHeight', { value: 500, configurable: true })
+		list.scrollTop = 200
+		fireEvent.scroll(list)
+		scrolled.mockClear()
+		write(' and more.')
+		await screen.findByText('Start of it and more.')
+		finish()
+		await screen.findByRole('button', { name: 'Send' })
+		expect(scrolled).not.toHaveBeenCalled()
+		await typeAndSend('Again')
+		await screen.findByText('Second answer.')
+		expect(scrolled).toHaveBeenCalled()
+		Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+	})
+
 	it('shares the room between documents, so two cannot overflow the model', async () => {
 		const long = { name: 'a.txt', text: 'x'.repeat(50_000), truncated: false }
 		const { host, chat } = makeHost([say('ok')], {}, { pickDocument: async () => long })
@@ -944,6 +997,49 @@ describe('moving around while an answer is written', () => {
 		)
 		await userEvent.click(screen.getByRole('button', { name: 'Write something long' }))
 		expect(await screen.findByText('Finished anyway.')).toBeTruthy()
+	})
+})
+
+describe('moving a tab while its answer is written', () => {
+	it('keeps writing when the tab is dragged to another pane', async () => {
+		let release: (reply: ModelReply) => void = () => {}
+		const { host, chat, conversations } = makeHost([])
+		chat.mockImplementationOnce(
+			(request: ChatRequest) =>
+				new Promise((resolve) => {
+					request.onText?.('Halfway')
+					release = resolve
+				}),
+		)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Write something long')
+		await screen.findByText('Halfway')
+		await userEvent.click(screen.getByRole('button', { name: 'New conversation side by side' }))
+		await waitFor(() => expect(document.querySelectorAll('.ngm-pane')).toHaveLength(2))
+
+		const data = new Map<string, string>()
+		const drag = {
+			types: [] as string[],
+			effectAllowed: '',
+			dropEffect: '',
+			setData(type: string, value: string) {
+				data.set(type, value)
+				this.types.push(type)
+			},
+			getData: (type: string) => data.get(type) ?? '',
+		}
+		const right = document.querySelectorAll<HTMLElement>('.ngm-tabs')[1] as HTMLElement
+		fireEvent.dragStart(document.querySelector('.ngm-tab') as HTMLElement, { dataTransfer: drag })
+		fireEvent.dragOver(right, { dataTransfer: drag })
+		fireEvent.drop(right, { dataTransfer: drag })
+		await waitFor(() => expect(document.querySelectorAll('.ngm-pane')).toHaveLength(1))
+
+		const request = chat.mock.calls[0]?.[0] as ChatRequest
+		expect(request.signal?.aborted).toBe(false)
+		expect(screen.getByText('Halfway')).toBeTruthy()
+		release(say('Halfway, and finished.'))
+		expect(await screen.findByText('Halfway, and finished.')).toBeTruthy()
+		expect([...conversations.values()][0]?.messages.at(-1)?.content).toBe('Halfway, and finished.')
 	})
 })
 

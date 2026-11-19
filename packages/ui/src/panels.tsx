@@ -7,7 +7,7 @@ import { usePrimitives } from './primitives.js'
 type PanelProps = { host: NgomateHost; settings: Settings; onChange: (settings: Settings) => void }
 
 export function ModelPanel({ host, settings, onChange }: PanelProps) {
-	const { Button, Chip } = usePrimitives()
+	const { Button, Checkbox, Chip } = usePrimitives()
 	const [info, setInfo] = useState<ModelInfo | null>(null)
 	const [progress, setProgress] = useState<DownloadProgress | null>(null)
 	const [problem, setProblem] = useState<string | null>(null)
@@ -183,6 +183,20 @@ export function ModelPanel({ host, settings, onChange }: PanelProps) {
 				address is not on this computer, what you type goes there.
 			</p>
 			<ServerForm host={host} settings={settings} onChange={onChange} initial={server} />
+
+			<h3>Answers</h3>
+			<label className="ngm-tool-switch">
+				<Checkbox
+					checked={Boolean(settings.wholeAnswers)}
+					onChange={(event) => onChange({ ...settings, wholeAnswers: event.target.checked })}
+				/>
+				<span>
+					Show each answer when it is complete
+					<span className="ngm-muted ngm-tool-about">
+						Instead of watching it being written. It takes no longer either way.
+					</span>
+				</span>
+			</label>
 		</section>
 	)
 }

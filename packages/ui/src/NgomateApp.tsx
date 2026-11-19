@@ -1,5 +1,5 @@
 import type { PromptDefinition, TaskFile } from '@ngomate/core'
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react'
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatStart } from './Chat.js'
 import { TabBar, startConversationDrag } from './TabBar.js'
@@ -241,6 +241,14 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	const titleOf = (id: string) =>
 		conversations.find((conversation) => conversation.id === id)?.title ?? 'New conversation'
 	const shown = activeId(layout)
+	// Kept in first-opened order, so a tab moving between panes never moves its chat on the page.
+	const opened = useRef<string[]>([])
+	const openIds = layout.panes.flatMap((pane) => pane.tabs)
+	opened.current = [
+		...opened.current.filter((id) => openIds.includes(id)),
+		...openIds.filter((id) => !opened.current.includes(id)),
+	]
+	const chatOrder = opened.current
 
 	if (!settings) return <div className="ngm-loading">Loading…</div>
 
@@ -367,11 +375,16 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				 * Every open tab stays on the page, hidden when not shown, and so do they all behind the
 				 * settings: switching away never stops an answer being written.
 				 */}
-				<div className="ngm-panes" hidden={view !== 'chat'}>
+				<div
+					className="ngm-panes"
+					hidden={view !== 'chat'}
+					style={{ gridTemplateColumns: `repeat(${layout.panes.length}, minmax(280px, 1fr))` }}
+				>
 					{layout.panes.map((pane, paneIndex) => (
 						<section
 							key={pane.id}
-							className={`ngm-pane${paneIndex === layout.focused ? ' ngm-pane-focused' : ''}`}
+							className={`ngm-pane${paneIndex === layout.focused ? ' ngm-pane-focused' : ''}${paneIndex ? ' ngm-pane-follows' : ''}`}
+							style={{ gridColumn: paneIndex + 1 }}
 							aria-label={`Pane ${paneIndex + 1}`}
 							onFocusCapture={() => focusPane(paneIndex)}
 							onMouseDownCapture={() => focusPane(paneIndex)}
@@ -392,23 +405,36 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 									if (known) setLayout((current) => placeTab(current, pane.id, id, before))
 								}}
 							/>
-							{pane.tabs.map((id) => (
-								<div
-									className="ngm-chat-holder"
-									hidden={id !== pane.active}
-									key={id}
-									role="tabpanel"
-								>
-									<Chat
-										deps={deps}
-										conversationId={id}
-										start={start?.id === id ? start.begin : null}
-										onStarted={clearStart}
-									/>
-								</div>
-							))}
 						</section>
 					))}
+					{/*
+					 * One list for every pane, in the order tabs were first opened, each placed in its pane's
+					 * column: moving a tab to another pane changes only where it is shown, so an answer being
+					 * written carries on. Closing a tab still stops it.
+					 */}
+					{chatOrder.map((id) => {
+						const paneIndex = layout.panes.findIndex((pane) => pane.tabs.includes(id))
+						const pane = layout.panes[paneIndex]
+						if (!pane) return null
+						return (
+							<div
+								className={`ngm-chat-holder${paneIndex ? ' ngm-pane-follows' : ''}`}
+								style={{ gridColumn: paneIndex + 1 }}
+								hidden={id !== pane.active}
+								key={id}
+								role="tabpanel"
+								onFocusCapture={() => focusPane(paneIndex)}
+								onMouseDownCapture={() => focusPane(paneIndex)}
+							>
+								<Chat
+									deps={deps}
+									conversationId={id}
+									start={start?.id === id ? start.begin : null}
+									onStarted={clearStart}
+								/>
+							</div>
+						)
+					})}
 				</div>
 				{view === 'model' && (
 					<ModelPanel host={host} settings={settings} onChange={updateSettings} />

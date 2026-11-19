@@ -195,8 +195,13 @@
 	overflow-y: auto;
 }
 
+/*
+ * A grid: each pane's tab bar in the top row, its chats below in the same column. The chats are
+ * not inside the pane's element, so a tab can change panes without its chat being rebuilt.
+ */
 .ngm-panes {
-	display: flex;
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr);
 	flex: 1;
 	min-height: 0;
 }
@@ -207,13 +212,12 @@
 
 .ngm-pane {
 	display: flex;
-	flex: 1 1 0;
+	grid-row: 1;
 	flex-direction: column;
-	min-width: 280px;
-	min-height: 0;
+	min-width: 0;
 }
 
-.ngm-pane + .ngm-pane {
+.ngm-pane-follows {
 	border-left: 1px solid var(--ngm-line);
 }
 
@@ -366,8 +370,9 @@
 
 .ngm-chat-holder {
 	display: flex;
-	flex: 1;
+	grid-row: 2;
 	flex-direction: column;
+	min-width: 0;
 	min-height: 0;
 }
 

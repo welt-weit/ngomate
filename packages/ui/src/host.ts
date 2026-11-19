@@ -95,6 +95,8 @@ export type ModelChoice =
 export type Settings = {
 	model: ModelChoice | null
 	addons: Addon[]
+	/** Show an answer once it is complete, rather than as it is written. Off unless chosen. */
+	wholeAnswers?: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = { model: null, addons: [] }
