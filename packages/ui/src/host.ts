@@ -7,6 +7,7 @@ import type {
 	TaskFile,
 	ToolSource,
 } from '@ngomate/core'
+import type { StoredLayout } from './layout.js'
 
 /** One model the app offers. Sizes in bytes. */
 export type ModelEntry = {
@@ -97,6 +98,8 @@ export type Settings = {
 	addons: Addon[]
 	/** Show an answer once it is complete, rather than as it is written. Off unless chosen. */
 	wholeAnswers?: boolean
+	/** The tabs and panes open when the app was last used, opened again on the next launch. */
+	layout?: StoredLayout
 }
 
 export const DEFAULT_SETTINGS: Settings = { model: null, addons: [] }
@@ -112,6 +115,8 @@ export type Conversation = {
 	notices: Record<number, AnswerNotice>
 	/** When each message was sent or answered, keyed by position. Missing on messages kept before this. */
 	times?: Record<number, string>
+	/** The ready-made task a question was asked through, by its id, keyed by position. So Retry can use it. */
+	tasks?: Record<number, string>
 }
 
 export type AnswerNotice = {

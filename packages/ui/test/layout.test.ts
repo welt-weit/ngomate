@@ -8,7 +8,9 @@ import {
 	openTab,
 	placeTab,
 	replaceActive,
+	restoreLayout,
 	singleLayout,
+	storeLayout,
 } from '../src/layout.js'
 
 /** What is shown where, without the panes' own ids. */
@@ -92,5 +94,46 @@ describe('layout', () => {
 		expect(shape(placeTab(layout, pane, 'c', 'a'))).toEqual([
 			{ tabs: ['c', 'a', 'b'], active: 'c' },
 		])
+	})
+
+	it('opens the kept tabs again, without what was deleted or never saved, and with fresh pane ids', () => {
+		const before = openTab(openBeside(singleLayout('a'), 'b'), 'gone')
+		const kept = JSON.parse(JSON.stringify(storeLayout(before)))
+		const after = restoreLayout(kept, (id) => id !== 'gone')
+		expect(after && shape(after)).toEqual([
+			{ tabs: ['a'], active: 'a' },
+			{ tabs: ['b'], active: 'b' },
+		])
+		expect(after?.focused).toBe(1)
+		const ids = [...before.panes, ...(after?.panes ?? [])].map((pane) => pane.id)
+		expect(new Set(ids).size).toBe(ids.length)
+	})
+
+	it('drops a pane left empty, a tab kept twice, and panes over the limit', () => {
+		const kept = {
+			panes: [
+				{ tabs: ['gone'], active: 'gone' },
+				{ tabs: ['a', 'a', 'b'], active: 'gone' },
+				...Array.from({ length: MAX_PANES }, (_, index) => ({
+					tabs: [`p${index}`],
+					active: `p${index}`,
+				})),
+			],
+			focused: 0,
+		}
+		const after = restoreLayout(kept, (id) => id !== 'gone')
+		expect(after?.panes).toHaveLength(MAX_PANES)
+		expect(after && shape(after)[0]).toEqual({ tabs: ['a', 'b'], active: 'a' })
+		expect(after?.focused).toBe(0)
+	})
+
+	it('opens nothing from a missing or broken file', () => {
+		const keep = () => true
+		expect(restoreLayout(undefined, keep)).toBeNull()
+		expect(restoreLayout({ panes: 'no' }, keep)).toBeNull()
+		expect(restoreLayout({ panes: [null, { tabs: [1, null] }], focused: 0 }, keep)).toBeNull()
+		expect(
+			restoreLayout({ panes: [{ tabs: ['gone'], active: 'gone' }], focused: 0 }, () => false),
+		).toBeNull()
 	})
 })

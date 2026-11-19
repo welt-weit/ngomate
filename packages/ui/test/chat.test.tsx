@@ -483,6 +483,22 @@ describe('chat', () => {
 		})
 	})
 
+	it('retries a question through the ready-made task it was asked with', async () => {
+		const replies: ModelReply[] = []
+		const { host, chat, conversations } = makeHost(replies)
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Draft a section' }))
+		await typeAndSend('Question 2')
+		expect(await screen.findByText('No answer')).toBeTruthy()
+		replies.push(say('The section.'))
+		await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+		await screen.findByText('The section.')
+		const again = chat.mock.calls.at(-1)?.[0] as ChatRequest
+		expect(again.tools).toEqual([])
+		expect(again.messages.at(1)?.content).toContain('Use only what is given.')
+		await waitFor(() => expect([...conversations.values()][0]?.tasks).toEqual({ 0: 'draft' }))
+	})
+
 	it('shows when each message was sent, and keeps Copy and Save in the message menu', async () => {
 		const { host } = makeHost([say('Done.')])
 		render(<NgomateApp host={host} />)
@@ -1040,6 +1056,61 @@ describe('moving a tab while its answer is written', () => {
 		release(say('Halfway, and finished.'))
 		expect(await screen.findByText('Halfway, and finished.')).toBeTruthy()
 		expect([...conversations.values()][0]?.messages.at(-1)?.content).toBe('Halfway, and finished.')
+	})
+})
+
+describe('tabs between launches', () => {
+	it('opens the tabs and panes from last time, and keeps each change for next time', async () => {
+		const saved: Settings[] = []
+		const { host, conversations } = makeHost(
+			[],
+			{
+				layout: {
+					panes: [
+						{ tabs: ['one', 'deleted'], active: 'one' },
+						{ tabs: ['two'], active: 'two' },
+					],
+					focused: 1,
+				},
+			},
+			{ saveSettings: async (next) => void saved.push(next) },
+		)
+		for (const [id, content] of [
+			['one', 'First chat'],
+			['two', 'Second chat'],
+		] as const) {
+			conversations.set(id, {
+				id,
+				title: content,
+				updatedAt: '2026-01-01T00:00:00.000Z',
+				messages: [{ role: 'user', content }],
+				notices: {},
+			})
+		}
+		render(<NgomateApp host={host} />)
+		await waitFor(() => expect(document.querySelectorAll('.ngm-pane')).toHaveLength(2))
+		expect(
+			[...document.querySelectorAll('.ngm-tab')].map((tab) => tab.getAttribute('title')),
+		).toEqual(['First chat', 'Second chat'])
+		// The pane that was in use is in use again, showing its conversation.
+		await waitFor(() =>
+			expect(
+				[...document.querySelectorAll('.ngm-chat-holder:not([hidden]) .ngm-messages')].map(
+					(list) => list.textContent,
+				),
+			).toEqual([expect.stringContaining('First chat'), expect.stringContaining('Second chat')]),
+		)
+		expect(document.querySelectorAll('.ngm-pane')[1]?.classList.contains('ngm-pane-focused')).toBe(
+			true,
+		)
+		// Reading it back saves nothing: only a change does.
+		expect(saved).toHaveLength(0)
+
+		await userEvent.click(
+			screen.getAllByRole('button', { name: 'New conversation side by side' })[0] as HTMLElement,
+		)
+		await waitFor(() => expect(saved.at(-1)?.layout?.panes).toHaveLength(3))
+		expect(saved.at(-1)?.layout?.panes[0]?.tabs).toEqual(['one'])
 	})
 })
 

@@ -32,8 +32,8 @@ export function focusTab(layout: Layout, paneIndex: number, id: string): Layout 
 }
 
 /**
- * Opens a conversation in a new pane beside the one in use. One already open is shown where it is:
- * moving it would rebuild its chat and stop an answer being written. At the limit it opens as a tab.
+ * Opens a conversation in a new pane beside the one in use. One already open is shown where it is,
+ * not taken from the pane the person put it in. At the limit it opens as a tab.
  */
 export function openBeside(layout: Layout, id: string): Layout {
 	if (layout.panes.length >= MAX_PANES || paneOf(layout, id) >= 0) return openTab(layout, id)
@@ -104,3 +104,39 @@ export function placeTab(layout: Layout, paneId: string, id: string, before?: st
 }
 
 export const activeId = (layout: Layout): string | undefined => layout.panes[layout.focused]?.active
+
+/** What is kept between launches. Pane ids are not: they are made fresh, so they never collide. */
+export type StoredLayout = { panes: { tabs: string[]; active: string }[]; focused: number }
+
+export const storeLayout = (layout: Layout): StoredLayout => ({
+	panes: layout.panes.map(({ tabs, active }) => ({ tabs, active })),
+	focused: layout.focused,
+})
+
+/**
+ * The kept layout, with only the conversations `keep` still has: one deleted or never saved is left
+ * out, and a pane left empty goes. Null when nothing is left. Read from a file, so checked, not trusted.
+ */
+export function restoreLayout(stored: unknown, keep: (id: string) => boolean): Layout | null {
+	const raw = stored as Partial<StoredLayout> | null
+	if (!raw || !Array.isArray(raw.panes)) return null
+	const seen = new Set<string>()
+	const panes: Pane[] = []
+	let focused = 0
+	raw.panes.forEach((pane, index) => {
+		if (panes.length >= MAX_PANES || !Array.isArray(pane?.tabs)) return
+		// A conversation is open once: kept twice, its second tab is dropped.
+		const tabs: string[] = []
+		for (const id of pane.tabs as unknown[]) {
+			if (typeof id !== 'string' || !keep(id) || seen.has(id)) continue
+			seen.add(id)
+			tabs.push(id)
+		}
+		const first = tabs[0]
+		if (!first) return
+		if (index === raw.focused) focused = panes.length
+		const made = newPane(first)
+		panes.push({ ...made, tabs, active: tabs.includes(pane.active) ? pane.active : first })
+	})
+	return panes.length ? { panes, focused } : null
+}

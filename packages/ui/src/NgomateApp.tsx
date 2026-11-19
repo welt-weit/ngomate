@@ -16,7 +16,9 @@ import {
 	openTab,
 	placeTab,
 	replaceActive,
+	restoreLayout,
 	singleLayout,
+	storeLayout,
 } from './layout.js'
 import { MemoryPanel, ModelPanel } from './panels.js'
 import {
@@ -30,6 +32,9 @@ import {
 import { useIdleUnload } from './useIdleUnload.js'
 
 type View = 'chat' | 'model' | 'addons' | 'memory'
+
+const newestFirst = <T extends { updatedAt: string }>(listed: T[]) =>
+	[...listed].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 
 type ConnectorPrompt = PromptDefinition & { run: (args: Record<string, string>) => Promise<string> }
 
@@ -113,15 +118,27 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	const [prompts, setPrompts] = useState<ConnectorPrompt[]>([])
 	const [openPrompt, setOpenPrompt] = useState<ConnectorPrompt | null>(null)
 
+	// The kept layout is saved again only once it has been read, or the fresh one would replace it.
+	const [restored, setRestored] = useState(false)
+
 	const refreshConversations = useCallback(async () => {
-		const listed = await host.listConversations()
-		setConversations([...listed].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)))
+		setConversations(newestFirst(await host.listConversations()))
 	}, [host])
 
 	useEffect(() => {
-		host.loadSettings().then(setSettings)
-		refreshConversations()
-	}, [host, refreshConversations])
+		let current = true
+		Promise.all([host.loadSettings(), host.listConversations()]).then(([loaded, listed]) => {
+			if (!current) return
+			setSettings(loaded)
+			setConversations(newestFirst(listed))
+			const kept = restoreLayout(loaded.layout, (id) => listed.some((saved) => saved.id === id))
+			if (kept) setLayout(kept)
+			setRestored(true)
+		})
+		return () => {
+			current = false
+		}
+	}, [host])
 
 	const updateSettings = useCallback(
 		(next: Settings) => {
@@ -130,6 +147,20 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		},
 		[host],
 	)
+
+	// Saved when the person changes it, not for what was just opened.
+	const settingsRef = useRef(settings)
+	settingsRef.current = settings
+	const keptLayout = useRef<string | null>(null)
+	useEffect(() => {
+		const current = settingsRef.current
+		if (!restored || !current) return
+		const layoutNow = storeLayout(layout)
+		const json = JSON.stringify(layoutNow)
+		const before = keptLayout.current
+		keptLayout.current = json
+		if (before !== null && before !== json) updateSettings({ ...current, layout: layoutNow })
+	}, [layout, restored, updateSettings])
 
 	const addons = settings?.addons
 	// biome-ignore lint/correctness/useExhaustiveDependencies: asks again when connectors change

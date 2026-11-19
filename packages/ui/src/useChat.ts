@@ -285,6 +285,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				: makeTitle(prompt?.title ?? task?.title ?? (text || documents[0]?.name || ''))
 			const asked = [...current.messages, { role: 'user' as const, content: input }]
 			const times = { ...current.times, [current.messages.length]: new Date().toISOString() }
+			const tasks = task ? { ...current.tasks, [current.messages.length]: task.id } : current.tasks
 			try {
 				// Saved before anything can fail, because the composer has already been cleared.
 				await save({
@@ -293,6 +294,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					updatedAt: new Date().toISOString(),
 					messages: asked,
 					times,
+					tasks,
 					documents: allDocuments,
 				})
 
@@ -451,6 +453,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 					messages,
 					notices,
 					times,
+					tasks,
 					documents: allDocuments,
 				})
 			} catch (err) {
@@ -472,8 +475,9 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	const stop = useCallback(() => abort.current?.abort(), [])
 
 	/**
-	 * Sends the last question again, in place of its answer, or of the answer it never got. It goes as
-	 * a plain message: a ready-made task it was asked through is not kept with the conversation.
+	 * Sends the last question again, in place of its answer, or of the answer it never got, through the
+	 * ready-made task it was asked through. One this app no longer has, or one asked before tasks were
+	 * kept, goes as a plain message.
 	 */
 	const retry = useCallback(() => {
 		const at = conversation.messages.findLastIndex((message) => message.role === 'user')
@@ -481,17 +485,20 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 		if (at < 0 || !question?.content) return
 		const before = <T>(record: Record<number, T> = {}) =>
 			Object.fromEntries(Object.entries(record).filter(([index]) => Number(index) < at))
+		const taskId = conversation.tasks?.[at]
+		const task = taskId ? host.tasks.find((known) => known.id === taskId) : undefined
 		return send(
 			question.content,
-			{},
+			{ task },
 			{
 				...conversation,
 				messages: conversation.messages.slice(0, at),
 				notices: before(conversation.notices),
 				times: before(conversation.times),
+				tasks: before(conversation.tasks),
 			},
 		)
-	}, [conversation, send])
+	}, [conversation, host, send])
 
 	/** Takes a document out of the conversation, so it is not sent with any later message. */
 	const removeDocument = useCallback(
