@@ -112,7 +112,11 @@ export type TaskRun = {
 	knowledgeMs: number | null
 	/** Time spent running the tools the model called, a search it asked for included. */
 	toolMs: number
+	/** Each tool call, in order, with its time on the network when the connector reports it. */
+	toolCalls: ToolTiming[]
 }
+
+export type ToolTiming = { tool: string; ms: number; httpMs: number | null }
 
 export type RunTaskOptions = {
 	model: ModelClient
@@ -348,6 +352,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 	const knowledgeMs = searchedFirst ? Math.round(performance.now() - searchStart) : null
 	const modelCalls: ModelTiming[] = []
 	let toolMs = 0
+	const toolCalls: ToolTiming[] = []
 	sources.push(...knowledge.sources)
 	const preloaded: string[] = []
 	for (const { tool, args } of profile.preload ?? []) {
@@ -435,6 +440,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 			modelCalls,
 			knowledgeMs,
 			toolMs: Math.round(toolMs),
+			toolCalls,
 		}
 	}
 	const count = (reply: Awaited<ReturnType<ModelClient['chat']>>) => {
@@ -528,8 +534,10 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 			}
 			toolCallCount++
 			const callStart = performance.now()
-			const { outcome, text } = await handleCall(call, options, calls, onEvent)
-			toolMs += performance.now() - callStart
+			const { outcome, text, httpMs } = await handleCall(call, options, calls, onEvent)
+			const callMs = performance.now() - callStart
+			toolMs += callMs
+			toolCalls.push({ tool: call.name, ms: Math.round(callMs), httpMs: httpMs ?? null })
 			messages.push({
 				role: 'tool',
 				toolCallId: call.id,
@@ -551,7 +559,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		{ tools: source }: RunTaskOptions,
 		record: TaskRecord[],
 		emit: RunTaskOptions['onEvent'],
-	): Promise<{ outcome: TaskRecord['outcome']; text: string }> {
+	): Promise<{ outcome: TaskRecord['outcome']; text: string; httpMs?: number }> {
 		const refuse = (
 			reason: RefusalReason,
 			args: Record<string, unknown> | null,
@@ -675,6 +683,10 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 			chars: result.text.length,
 		})
 		if (kind === 'read' && !result.isError) sources.push(result.text)
-		return { outcome: result.isError ? 'tool_error' : 'ok', text: result.text }
+		return {
+			outcome: result.isError ? 'tool_error' : 'ok',
+			text: result.text,
+			httpMs: result.httpMs,
+		}
 	}
 }

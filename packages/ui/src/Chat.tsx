@@ -185,7 +185,12 @@ export function describeTiming(timing: AnswerTiming): string {
 		`Model ready after ${seconds(timing.startMs)}`,
 	]
 	if (timing.knowledgeMs !== null) lines.push(`Knowledge search: ${seconds(timing.knowledgeMs)}`)
+	if (timing.hiddenMs) lines.push(`The app was out of sight for ${seconds(timing.hiddenMs)}`)
 	if (timing.toolMs > 0) lines.push(`Tools: ${seconds(timing.toolMs)}`)
+	for (const call of timing.toolCalls ?? []) {
+		const network = call.httpMs === null ? '' : `, ${seconds(call.httpMs)} of it on the network`
+		lines.push(`  ${call.tool}: ${seconds(call.ms)}${network}`)
+	}
 	timing.modelCalls.forEach((call, index) => {
 		const read =
 			call.promptRead === null
@@ -281,19 +286,21 @@ const MessageView = memo(function MessageView({
 	return (
 		<div className="ngm-message ngm-assistant">
 			{/* Model text is never rendered as HTML, and its links do not navigate this window. */}
-			<Markdown
-				remarkPlugins={[remarkGfm]}
-				components={{
-					a: ({ href, children }) => (
-						<a href={href} target="_blank" rel="noreferrer noopener">
-							{children}
-						</a>
-					),
-					img: ({ alt }) => <span>{alt}</span>,
-				}}
-			>
-				{text}
-			</Markdown>
+			<div className="ngm-answer-text">
+				<Markdown
+					remarkPlugins={[remarkGfm]}
+					components={{
+						a: ({ href, children }) => (
+							<a href={href} target="_blank" rel="noreferrer noopener">
+								{children}
+							</a>
+						),
+						img: ({ alt }) => <span>{alt}</span>,
+					}}
+				>
+					{text}
+				</Markdown>
+			</div>
 			{notice && <Notice notice={notice} />}
 			<MessageMeta
 				time={time}

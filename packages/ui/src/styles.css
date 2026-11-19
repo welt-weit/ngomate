@@ -19,6 +19,36 @@
 	box-sizing: border-box;
 }
 
+/*
+ * Like other desktop apps, buttons, tabs and labels are not text to select: copying an answer then
+ * copies the answer, not the times and menus around it. What people write and read stays selectable.
+ */
+.ngm-app {
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.ngm-message,
+.ngm-notice,
+.ngm-panel,
+.ngm-error,
+.ngm-pre,
+.ngm-update-notes,
+.ngm-addon-details,
+.ngm-app input,
+.ngm-app textarea,
+.ngm-app [contenteditable] {
+	-webkit-user-select: text;
+	user-select: text;
+}
+
+.ngm-message-meta,
+.ngm-tool-line,
+.ngm-panel .ngm-button {
+	-webkit-user-select: none;
+	user-select: none;
+}
+
 /* On NGOmate's own controls only, so a host's components keep their look. */
 .ngm-button,
 .ngm-input {
@@ -422,7 +452,8 @@
 	border-radius: var(--ngm-radius);
 }
 
-.ngm-assistant > :first-child {
+.ngm-assistant > :first-child,
+.ngm-answer-text > :first-child {
 	margin-top: 0;
 }
 

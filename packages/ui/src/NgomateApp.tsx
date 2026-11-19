@@ -29,6 +29,7 @@ import {
 	themeVariables,
 	usePrimitives,
 } from './primitives.js'
+import { selectAllInConversation } from './select-all.js'
 import { useIdleUnload } from './useIdleUnload.js'
 
 type View = 'chat' | 'model' | 'addons' | 'memory'
@@ -96,9 +97,17 @@ export type NgomateAppProps = {
 
 export function NgomateApp({ theme, primitives, ...props }: NgomateAppProps) {
 	const merged = useMemo(() => ({ ...DEFAULT_PRIMITIVES, ...primitives }), [primitives])
+	const root = useRef<HTMLDivElement>(null)
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (root.current) selectAllInConversation(event, root.current)
+		}
+		document.addEventListener('keydown', onKey)
+		return () => document.removeEventListener('keydown', onKey)
+	}, [])
 	return (
 		<PrimitivesProvider value={merged}>
-			<div className="ngm-app" style={themeVariables(theme) as CSSProperties}>
+			<div ref={root} className="ngm-app" style={themeVariables(theme) as CSSProperties}>
 				<AppContent {...props} />
 			</div>
 		</PrimitivesProvider>

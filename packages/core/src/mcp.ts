@@ -1,7 +1,12 @@
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { ToolDefinition } from './model.js'
 
-export type ToolResult = { text: string; isError: boolean }
+export type ToolResult = {
+	text: string
+	isError: boolean
+	/** Time on the network for an HTTP connector, answer read in full. Absent for other connectors. */
+	httpMs?: number
+}
 
 /** A ready-made task a connector offers. */
 export type PromptDefinition = {
@@ -30,20 +35,51 @@ export type McpToolSourceOptions = {
 	clientName?: string
 }
 
-async function httpTransport(options: McpToolSourceOptions): Promise<Transport> {
+/** No body allowed with these, so one read in full is not put back. */
+const NO_BODY = [101, 103, 204, 205, 304]
+
+/**
+ * Counts the time requests spend on the network, so a slow tool call can be told apart from a slow
+ * server. A JSON answer is read here, to count reading it too; an event stream is passed on as it is,
+ * since it may stay open.
+ */
+function timedFetch(base: typeof fetch, spent: { ms: number }): typeof fetch {
+	return async (input, init) => {
+		const start = performance.now()
+		try {
+			const response = await base(input, init)
+			if (!response.headers.get('content-type')?.includes('application/json')) return response
+			const body = await response.arrayBuffer()
+			return new Response(NO_BODY.includes(response.status) || !body.byteLength ? null : body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: response.headers,
+			})
+		} finally {
+			spent.ms += performance.now() - start
+		}
+	}
+}
+
+async function httpTransport(
+	options: McpToolSourceOptions,
+	spent: { ms: number },
+): Promise<Transport> {
 	if (!options.url) throw new Error('An MCP server needs a url or a transport')
 	const token = await options.getAccessToken?.()
 	const { StreamableHTTPClientTransport } = await import(
 		'@modelcontextprotocol/sdk/client/streamableHttp.js'
 	)
 	return new StreamableHTTPClientTransport(new URL(options.url), {
-		...(options.fetch ? { fetch: options.fetch } : {}),
+		fetch: timedFetch(options.fetch ?? fetch, spent),
 		...(token ? { requestInit: { headers: { authorization: `Bearer ${token}` } } } : {}),
 	}) as Transport
 }
 
 export async function connectMcpToolSource(options: McpToolSourceOptions): Promise<ToolSource> {
-	const transport = options.transport ?? (await httpTransport(options))
+	const spent = { ms: 0 }
+	const transport = options.transport ?? (await httpTransport(options, spent))
+	const overHttp = !options.transport
 	// Loaded on first use: someone with no connectors should not spend memory on the protocol library.
 	const [{ Client }, { CfWorkerJsonSchemaValidator }] = await Promise.all([
 		import('@modelcontextprotocol/sdk/client/index.js'),
@@ -85,12 +121,17 @@ export async function connectMcpToolSource(options: McpToolSourceOptions): Promi
 		},
 
 		async callTool(name, args) {
+			const before = spent.ms
 			const result = await client.callTool({ name, arguments: args })
 			const content = Array.isArray(result.content) ? result.content : []
 			const text = content
 				.map((part) => (part.type === 'text' ? part.text : `[${part.type} content omitted]`))
 				.join('\n')
-			return { text, isError: result.isError === true }
+			return {
+				text,
+				isError: result.isError === true,
+				...(overHttp ? { httpMs: Math.round(spent.ms - before) } : {}),
+			}
 		},
 
 		async listPrompts() {

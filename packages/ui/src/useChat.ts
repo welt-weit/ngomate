@@ -274,7 +274,18 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 			// Where the wait went, kept with the answer so slow answers can be looked into.
 			const sentAt = performance.now()
 			const waited = { startMs: 0, firstWordMs: null as number | null }
-			// Shown in batches: every small piece redrawing the page is too much for a slow computer.
+			// A hidden window may be slowed down by the computer, which would look like a slow answer.
+			const hidden = { ms: 0, since: document.hidden ? sentAt : (null as number | null) }
+			const onVisibility = () => {
+				if (document.hidden) hidden.since ??= performance.now()
+				else if (hidden.since !== null) {
+					hidden.ms += performance.now() - hidden.since
+					hidden.since = null
+				}
+			}
+			document.addEventListener('visibilitychange', onVisibility)
+			const hiddenMs = () =>
+				Math.round(hidden.ms + (hidden.since === null ? 0 : performance.now() - hidden.since)) // Shown in batches: every small piece redrawing the page is too much for a slow computer.
 			let flushTimer: ReturnType<typeof setTimeout> | null = null
 			const flush = () => {
 				flushTimer = null
@@ -438,7 +449,9 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 							totalMs: Math.round(performance.now() - sentAt),
 							knowledgeMs: run.knowledgeMs,
 							toolMs: run.toolMs,
+							toolCalls: run.toolCalls,
 							modelCalls: run.modelCalls,
+							hiddenMs: hiddenMs(),
 						},
 					}
 					notices[messages.length - 1] = notice
@@ -460,6 +473,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				setError(err instanceof Error ? err.message : String(err))
 			} finally {
 				if (flushTimer) clearTimeout(flushTimer)
+				document.removeEventListener('visibilitychange', onVisibility)
 				setReadingDocument(false)
 				await tools?.close().catch(() => {})
 				depsRef.current.onBusyChange?.(false)

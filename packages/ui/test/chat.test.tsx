@@ -13,6 +13,7 @@ import {
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { connectionProblem, splitCommand } from '../src/AddonsPanel.js'
+import { describeTiming } from '../src/Chat.js'
 import { NgomateApp } from '../src/NgomateApp.js'
 import { recommendedModelId } from '../src/format.js'
 import {
@@ -538,12 +539,79 @@ describe('chat', () => {
 			const timing = [...conversations.values()][0]?.notices[1]?.timing
 			expect(timing?.modelCalls).toHaveLength(1)
 			expect(timing?.firstWordMs).toBeTypeOf('number')
+			expect(timing?.toolCalls).toEqual([])
+			expect(timing?.hiddenMs).toBe(0)
 		})
 		const shown = document.querySelectorAll('.ngm-messages time')[1]?.getAttribute('title') ?? ''
 		expect(shown).toMatch(/^First words after \d+\.\d s, done after \d+\.\d s/)
 		expect(shown).toContain(
 			'Model call 1: 2.0 s, read 1,830 tokens (2,100 reused) in 0.8 s, wrote 14.2 tokens/s',
 		)
+	})
+
+	it('selects the answer on Select All, then the conversation, and never the interface', async () => {
+		const { host } = makeHost([say('An answer to copy.')])
+		render(<NgomateApp host={host} />)
+		await typeAndSend('A question')
+		const answer = await screen.findByText('An answer to copy.')
+		const selection = document.getSelection() as Selection
+		selection.collapse(answer.firstChild as Node, 3)
+		const selectAll = () =>
+			fireEvent.keyDown(document.body, { key: 'a', metaKey: true, ctrlKey: false })
+		selectAll()
+		expect(selection.toString().trim()).toBe('An answer to copy.')
+		selectAll()
+		expect(selection.toString()).toContain('A question')
+		expect(selection.toString()).toContain('An answer to copy.')
+		expect(selection.toString()).not.toContain('Conversations')
+		// In the text box the usual Select All applies.
+		const box = screen.getByRole('textbox')
+		expect(fireEvent.keyDown(box, { key: 'a', ctrlKey: true })).toBe(true)
+		selection.removeAllRanges()
+	})
+
+	it('counts the time the app was out of sight while answering', async () => {
+		const { host, chat, conversations } = makeHost([])
+		let finish = () => {}
+		chat.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = () => resolve(say('Back again.'))
+				}),
+		)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Hi')
+		await waitFor(() => expect(chat).toHaveBeenCalled())
+		const setHidden = (value: boolean) => {
+			Object.defineProperty(document, 'hidden', { value, configurable: true })
+			document.dispatchEvent(new Event('visibilitychange'))
+		}
+		setHidden(true)
+		await new Promise((resolve) => setTimeout(resolve, 30))
+		setHidden(false)
+		finish()
+		await screen.findByText('Back again.')
+		Reflect.deleteProperty(document, 'hidden')
+		await waitFor(() =>
+			expect([...conversations.values()][0]?.notices[1]?.timing?.hiddenMs).toBeGreaterThanOrEqual(
+				25,
+			),
+		)
+	})
+
+	it('shows each tool call and its time on the network on the answer time', () => {
+		const shown = describeTiming({
+			firstWordMs: 1000,
+			totalMs: 140000,
+			startMs: 10,
+			knowledgeMs: null,
+			toolMs: 131000,
+			toolCalls: [{ tool: 'search_opportunities', ms: 131000, httpMs: 2100 }],
+			modelCalls: [],
+			hiddenMs: 120000,
+		})
+		expect(shown).toContain('The app was out of sight for 120.0 s')
+		expect(shown).toContain('search_opportunities: 131.0 s, 2.1 s of it on the network')
 	})
 
 	it('opens a conversation dragged from the list onto a tab bar, and ignores anything else dropped there', async () => {

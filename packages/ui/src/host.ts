@@ -6,6 +6,7 @@ import type {
 	ModelTiming,
 	TaskFile,
 	ToolSource,
+	ToolTiming,
 } from '@ngomate/core'
 import type { StoredLayout } from './layout.js'
 
@@ -153,7 +154,14 @@ export type AnswerTiming = {
 	/** The knowledge search made before the model was asked; null when none was. */
 	knowledgeMs: number | null
 	toolMs: number
+	/** Each tool call. Missing on answers kept before this was measured. */
+	toolCalls?: ToolTiming[]
 	modelCalls: ModelTiming[]
+	/**
+	 * How long the app was out of sight while answering: a computer may slow a hidden window down.
+	 * Missing on answers kept before this was measured.
+	 */
+	hiddenMs?: number
 }
 
 export type PickedDocument = {

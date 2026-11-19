@@ -73,11 +73,14 @@ describe('runTask', () => {
 		)
 		const slow = vi.fn(async () => {
 			await new Promise((resolve) => setTimeout(resolve, 20))
-			return { text: 'result', isError: false }
+			return { text: 'result', isError: false, httpMs: 3 }
 		})
 		const run = await runTask({ model, tools: source(slow).tools, profile, input: 'go' })
 		expect(run.modelCalls.map((call) => call.totalMs)).toEqual([30, 40])
 		expect(run.toolMs).toBeGreaterThanOrEqual(15)
+		// Each call on its own, with the network share the connector reported.
+		expect(run.toolCalls).toEqual([{ tool: 'search', ms: expect.any(Number), httpMs: 3 }])
+		expect(run.toolCalls[0]?.ms).toBeGreaterThanOrEqual(15)
 		// No search was made before the model was asked.
 		expect(run.knowledgeMs).toBeNull()
 	})

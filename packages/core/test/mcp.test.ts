@@ -67,6 +67,39 @@ describe('connectMcpToolSource', () => {
 		await tools.close()
 	})
 
+	it('says how much of a call over HTTP was spent on the network', async () => {
+		const json = (body: unknown) =>
+			new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			// The protocol's own requests: a stream nobody offers, and notices that get no answer.
+			if (init?.method === 'GET') return new Response(null, { status: 405 })
+			const message = JSON.parse(String(init?.body))
+			if (!('id' in message)) return new Response(null, { status: 202 })
+			if (message.method === 'initialize') {
+				return json({
+					jsonrpc: '2.0',
+					id: message.id,
+					result: {
+						protocolVersion: message.params.protocolVersion,
+						capabilities: { tools: {} },
+						serverInfo: { name: 'test', version: '1' },
+					},
+				})
+			}
+			await new Promise((resolve) => setTimeout(resolve, 20))
+			return json({
+				jsonrpc: '2.0',
+				id: message.id,
+				result: { content: [{ type: 'text', text: 'found' }] },
+			})
+		})
+		const tools = await connectMcpToolSource({ url: 'https://example.org/mcp', fetch })
+		const result = await tools.callTool('search', {})
+		expect(result.text).toBe('found')
+		expect(result.httpMs).toBeGreaterThanOrEqual(15)
+		await tools.close()
+	})
+
 	it('lists a prompt with its arguments and fills it in', async () => {
 		const tools = await connect()
 		const [prompt] = (await tools.listPrompts?.()) ?? []
