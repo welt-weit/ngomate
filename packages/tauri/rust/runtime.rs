@@ -20,6 +20,52 @@ pub struct Running {
 struct Process {
     child: Child,
     info: Running,
+    /// The file the model's read of the conversation is kept in between runs; none when it cannot be.
+    cache: Option<PathBuf>,
+}
+
+/// The file a model's read of the last conversation is kept in, replaced each time. Named after the
+/// model's file rather than its id, so a newer version of a model never loads what an older one read.
+pub fn cache_file(folder: &Path, model_file: &str) -> PathBuf {
+    let safe: String = model_file.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
+    folder.join(format!("{safe}.bin"))
+}
+
+/// Deletes kept files no model uses any more, such as one left by a model's older version.
+pub fn prune_kept(folder: &Path, in_use: &[PathBuf]) {
+    let Ok(files) = std::fs::read_dir(folder) else { return };
+    for file in files.flatten() {
+        let path = file.path();
+        if path.extension().is_some_and(|extension| extension == "bin") && !in_use.contains(&path) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Asks the server to save, load or erase its read of the conversation. Reading it again from the
+/// start takes a laptop a minute or more; loading it back takes seconds.
+async fn slot(info: &Running, action: &str, file: Option<&Path>) -> Result<()> {
+    let body = match file {
+        Some(file) => {
+            let name = file.file_name().and_then(|name| name.to_str()).ok_or_else(|| Error::msg("No file name"))?;
+            serde_json::json!({ "filename": name })
+        }
+        None => serde_json::json!({}),
+    };
+    let base = info.base_url.trim_end_matches("/v1");
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()?
+        .post(format!("{base}/slots/0?action={action}"))
+        .bearer_auth(&info.api_key)
+        .header("content-type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(Error::msg(format!("The model could not {action} its read: {}", response.status())));
+    }
+    Ok(())
 }
 
 /// At most one model runs, because one is what a laptop can hold in memory.
@@ -66,8 +112,8 @@ pub fn find_server(resource_dir: Option<PathBuf>) -> Result<PathBuf> {
     })
 }
 
-fn server_args(model: &Path, port: u16, context_tokens: u32) -> Vec<String> {
-    [
+fn server_args(model: &Path, port: u16, context_tokens: u32, cache: Option<&Path>) -> Vec<String> {
+    let mut args: Vec<String> = [
         "--model",
         &model.to_string_lossy(),
         "--host",
@@ -93,7 +139,11 @@ fn server_args(model: &Path, port: u16, context_tokens: u32) -> Vec<String> {
     ]
     .iter()
     .map(|arg| arg.to_string())
-    .collect()
+    .collect();
+    if let Some(folder) = cache {
+        args.extend(["--slot-save-path".to_string(), folder.to_string_lossy().to_string()]);
+    }
+    args
 }
 
 fn random_key() -> String {
@@ -176,10 +226,45 @@ impl Runtime {
         }
     }
 
-    /// Returns once the memory is free, so the next model does not load on top of this one.
+    /// For a stop asked from outside: a start waits until the read is saved and the memory is free,
+    /// so a message sent meanwhile neither loads a second model nor misses what was just kept.
+    pub async fn stop_and_keep(&self) {
+        let _starting = self.starting.lock().await;
+        self.stop_and_wait().await;
+    }
+
+    /// Waits out a start or a save under way; while the guard is held, neither can begin. For removing
+    /// or moving a model file, which a save finishing afterwards would otherwise write back beside.
+    pub async fn settled(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.starting.lock().await
+    }
+
+    /// After a conversation is deleted, nothing the model kept may still hold it: the running model
+    /// lets go of what it read, and every kept file goes, since a file does not say what it holds.
+    /// The next answer reads its conversation again.
+    pub async fn forget(&self, folder: &Path) {
+        let _starting = self.starting.lock().await;
+        let running = self.process.lock().unwrap().as_ref().map(|process| process.info.clone());
+        if let Some(info) = running {
+            // The kept files below go either way, and a model left holding it is stopped instead.
+            if slot(&info, "erase", None).await.is_err() {
+                self.stop();
+            }
+        }
+        prune_kept(folder, &[]);
+    }
+
+    /// Returns once the memory is free, so the next model does not load on top of this one. Keeps the
+    /// model's read of the conversation first, so the next start does not read it all again.
     async fn stop_and_wait(&self) {
         let process = self.process.lock().unwrap().take();
         if let Some(mut process) = process {
+            if let (Some(file), Ok(None)) = (&process.cache, process.child.try_wait()) {
+                // Without it the next answer is only slower, so a failure is no reason to keep running.
+                if slot(&process.info, "save", Some(file)).await.is_err() {
+                    let _ = std::fs::remove_file(file);
+                }
+            }
             let _ = process.child.kill().await;
         }
     }
@@ -199,7 +284,14 @@ impl Runtime {
         }
     }
 
-    pub async fn start(&self, server: &Path, id: &str, model: &Path, context_tokens: u32) -> Result<Running> {
+    pub async fn start(
+        &self,
+        server: &Path,
+        id: &str,
+        model: &Path,
+        context_tokens: u32,
+        cache: Option<PathBuf>,
+    ) -> Result<Running> {
         let _starting = self.starting.lock().await;
         if let Some(running) = self.current(id) {
             return Ok(running);
@@ -212,7 +304,7 @@ impl Runtime {
         let api_key = random_key();
         let mut command = Command::new(server);
         command
-            .args(server_args(model, port, context_tokens))
+            .args(server_args(model, port, context_tokens, cache.as_deref().and_then(Path::parent)))
             // In the environment, because a command line is visible to every user of the computer.
             .env("LLAMA_API_KEY", &api_key)
             .stdin(Stdio::null())
@@ -240,7 +332,14 @@ impl Runtime {
         let base = format!("http://127.0.0.1:{port}");
         wait_until_ready(&mut child, &base).await?;
         let info = Running { base_url: format!("{base}/v1"), api_key, id: id.to_string(), context_tokens };
-        *self.process.lock().unwrap() = Some(Process { child, info: info.clone() });
+        if let Some(file) = &cache {
+            // A file that does not load, say one cut short or from a larger context, would fail the same
+            // way at every start.
+            if file.exists() && slot(&info, "restore", Some(file)).await.is_err() {
+                let _ = std::fs::remove_file(file);
+            }
+        }
+        *self.process.lock().unwrap() = Some(Process { child, info: info.clone(), cache });
         Ok(info)
     }
 }
@@ -251,7 +350,7 @@ mod tests {
 
     #[test]
     fn listens_only_on_this_computer_with_no_page_of_its_own() {
-        let args = server_args(Path::new("/m.gguf"), 1234, 8192);
+        let args = server_args(Path::new("/m.gguf"), 1234, 8192, None);
         let after = |flag: &str| args[args.iter().position(|arg| arg == flag).unwrap() + 1].clone();
         assert_eq!(after("--host"), "127.0.0.1");
         assert!(args.iter().any(|arg| arg == "--no-webui"));
@@ -260,7 +359,7 @@ mod tests {
 
     #[test]
     fn keeps_no_prompt_cache_a_small_computer_cannot_spare() {
-        let args = server_args(Path::new("/m.gguf"), 1234, 4096);
+        let args = server_args(Path::new("/m.gguf"), 1234, 4096, None);
         let after = |flag: &str| args[args.iter().position(|arg| arg == flag).unwrap() + 1].clone();
         assert_eq!(after("--cache-ram"), "0");
         assert_eq!(after("--ctx-checkpoints"), "1");
@@ -329,7 +428,7 @@ mod tests {
             return;
         };
         let runtime = Runtime::default();
-        let running = runtime.start(Path::new(&server), "smoke", Path::new(&model), 256).await.unwrap();
+        let running = runtime.start(Path::new(&server), "smoke", Path::new(&model), 256, None).await.unwrap();
         let completion = format!("{}/completion", running.base_url.trim_end_matches("/v1"));
         let body = r#"{"prompt":"Once upon a time","n_predict":8}"#;
         let client = reqwest::Client::new();
@@ -344,6 +443,84 @@ mod tests {
         let text = answer["content"].as_str().unwrap_or_default();
         assert!(!text.trim().is_empty(), "empty answer: {answer}");
         runtime.stop_and_wait().await;
+    }
+
+    /// The same real server: a model stopped and started again carries on from what it had read,
+    /// instead of reading the whole conversation again.
+    #[tokio::test]
+    async fn the_bundled_server_keeps_what_it_read_across_a_stop() {
+        let (Ok(server), Ok(model)) = (std::env::var("NGOMATE_SMOKE_SERVER"), std::env::var("NGOMATE_SMOKE_MODEL"))
+        else {
+            return;
+        };
+        let folder = tempfile::tempdir().unwrap();
+        let runtime = Runtime::default();
+        let prompt = "Once upon a time there was a small organisation that planted trees along a river. ".repeat(12);
+        let body = serde_json::json!({ "prompt": prompt, "n_predict": 4, "cache_prompt": true });
+        let ask = |running: Running| {
+            let body = body.clone();
+            async move {
+                let completion = format!("{}/completion", running.base_url.trim_end_matches("/v1"));
+                let answer = reqwest::Client::new()
+                    .post(completion)
+                    .bearer_auth(&running.api_key)
+                    .header("content-type", "application/json")
+                    .body(body.to_string())
+                    .send()
+                    .await
+                    .unwrap();
+                let answer: serde_json::Value = serde_json::from_str(&answer.text().await.unwrap()).unwrap();
+                answer["timings"]["prompt_n"].as_u64().unwrap()
+            }
+        };
+
+        let kept = cache_file(folder.path(), "smoke.gguf");
+        let start = || runtime.start(Path::new(&server), "smoke", Path::new(&model), 512, Some(kept.clone()));
+
+        // A file cut short, as a quit during a save leaves it, is dropped and the model still answers.
+        std::fs::write(&kept, b"cut short").unwrap();
+        let read_at_first = ask(start().await.unwrap()).await;
+        runtime.stop_and_wait().await;
+        assert!(std::fs::metadata(&kept).unwrap().len() > 1000, "nothing was kept");
+
+        let read_again = ask(start().await.unwrap()).await;
+        assert!(read_again < read_at_first / 4, "read {read_again} of {read_at_first} tokens again");
+
+        // A deleted conversation: the kept file goes, and the running model reads it all again.
+        runtime.forget(folder.path()).await;
+        assert!(!kept.exists(), "the kept file outlived the conversation");
+        let read_after_forgetting = ask(runtime.current("smoke").expect("still running")).await;
+        assert_eq!(read_after_forgetting, read_at_first);
+        runtime.stop_and_wait().await;
+    }
+
+    #[test]
+    fn names_the_kept_file_after_the_model_and_nothing_else() {
+        let folder = Path::new("/kept");
+        assert_eq!(cache_file(folder, "Ministral-3-8B-Q4_K_M.gguf"), folder.join("Ministral-3-8B-Q4_K_M_gguf.bin"));
+        assert_eq!(cache_file(folder, "../x/y"), folder.join("___x_y.bin"));
+    }
+
+    #[test]
+    fn deletes_only_the_kept_files_no_model_uses() {
+        let folder = tempfile::tempdir().unwrap();
+        let used = cache_file(folder.path(), "new.gguf");
+        let old = cache_file(folder.path(), "old.gguf");
+        let other = folder.path().join("notes.txt");
+        for file in [&used, &old, &other] {
+            std::fs::write(file, b"x").unwrap();
+        }
+        prune_kept(folder.path(), std::slice::from_ref(&used));
+        assert!(used.exists() && other.exists());
+        assert!(!old.exists());
+    }
+
+    #[test]
+    fn tells_the_server_where_to_keep_its_read_only_when_there_is_a_folder() {
+        let with = server_args(Path::new("/m.gguf"), 1234, 4096, Some(Path::new("/kept")));
+        let at = with.iter().position(|arg| arg == "--slot-save-path").unwrap();
+        assert_eq!(with[at + 1], "/kept");
+        assert!(!server_args(Path::new("/m.gguf"), 1234, 4096, None).contains(&"--slot-save-path".to_string()));
     }
 
     #[test]

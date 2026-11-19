@@ -27,6 +27,11 @@ fn data_root<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
     Ok(app.path().app_data_dir()?)
 }
 
+/// What each model had read of the last conversation, kept so the next answer need not read it again.
+fn prompt_cache_dir<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
+    Ok(data_root(app)?.join("prompt-cache"))
+}
+
 /// One folder per user, not per app, so two hosts do not each download 5 GB.
 fn shared_dir<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
     Ok(app.path().data_dir()?.join("NGOmate"))
@@ -100,8 +105,19 @@ fn conversation_list<R: TauriRuntime>(app: AppHandle<R>) -> Result<Vec<store::Co
 }
 
 #[tauri::command]
-fn store_remove<R: TauriRuntime>(app: AppHandle<R>, area: String, name: String) -> Result<()> {
-    store::remove(&data_root(&app)?, store::Area::parse(&area)?, &name)
+async fn store_remove<R: TauriRuntime>(
+    app: AppHandle<R>,
+    runtime: State<'_, Runtime>,
+    area: String,
+    name: String,
+) -> Result<()> {
+    let area = store::Area::parse(&area)?;
+    store::remove(&data_root(&app)?, area, &name)?;
+    if matches!(area, store::Area::Conversations) {
+        // A deleted conversation must not live on in what the model kept of it.
+        runtime.forget(&prompt_cache_dir(&app)?).await;
+    }
+    Ok(())
 }
 
 fn keychain_entry(name: &str) -> Result<keyring::Entry> {
@@ -214,11 +230,16 @@ fn model_cancel_download(downloads: State<'_, Downloads>, id: String) {
 
 #[tauri::command]
 async fn model_remove<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>, id: String) -> Result<()> {
+    let entry = model(&id)?;
+    app.state::<FolderChange>().check()?;
+    // Held to the end, so a save under way cannot write the file back and a start cannot load the model.
+    let _settled = runtime.settled().await;
     if runtime.running_id().as_deref() == Some(id.as_str()) {
         runtime.stop();
     }
-    app.state::<FolderChange>().check()?;
-    models::remove(&models_dir(&app)?, model(&id)?).await
+    // The model's read of a conversation is no use without the model.
+    let _ = std::fs::remove_file(runtime::cache_file(&prompt_cache_dir(&app)?, entry.file));
+    models::remove(&models_dir(&app)?, entry).await
 }
 
 #[tauri::command]
@@ -242,6 +263,8 @@ async fn switch_models_folder<R: TauriRuntime>(
     }
     let change = app.state::<FolderChange>();
     let _held = change.begin()?;
+    // A save under way still holds the model's file, and would keep it open through the move.
+    let _settled = runtime.settled().await;
     if std::env::var("NGOMATE_MODELS_DIR").is_ok() {
         return Err(Error::msg("The model folder is set by NGOMATE_MODELS_DIR."));
     }
@@ -309,13 +332,19 @@ async fn runtime_start<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Ru
     let path = models::installed_path(&usable_models_dir(&app)?, entry);
     let mut system = sysinfo::System::new();
     system.refresh_memory();
-    let running = runtime.start(&server, &id, &path, runtime::context_for_ram(total_ram_gb(&system))).await?;
+    let folder = prompt_cache_dir(&app)?;
+    // Without the folder the model still runs; it only reads each conversation again after a stop.
+    let cache = std::fs::create_dir_all(&folder).ok().map(|_| runtime::cache_file(&folder, entry.file));
+    let in_use: Vec<PathBuf> = catalog::MODELS.iter().map(|model| runtime::cache_file(&folder, model.file)).collect();
+    runtime::prune_kept(&folder, &in_use);
+    let running = runtime.start(&server, &id, &path, runtime::context_for_ram(total_ram_gb(&system)), cache).await?;
     Ok(Started { running, search_knowledge_first: entry.search_knowledge_first })
 }
 
 #[tauri::command]
-fn runtime_stop(runtime: State<'_, Runtime>) {
-    runtime.stop();
+async fn runtime_stop(runtime: State<'_, Runtime>) -> Result<()> {
+    runtime.stop_and_keep().await;
+    Ok(())
 }
 
 /// A program runs with the person's permissions, so the exact command is confirmed in a native dialog
@@ -407,7 +436,12 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
         .on_event(|app, event| {
             // A model left running would hold gigabytes of memory after the window closed.
             if let RunEvent::Exit = event {
-                app.state::<Runtime>().stop();
+                let runtime = app.state::<Runtime>();
+                // Keeps what the model read, so the first answer after a relaunch is quick. A quit waits
+                // this long at most; a save cut short is dropped at the next start.
+                let keeping = tokio::time::timeout(std::time::Duration::from_secs(2), runtime.stop_and_keep());
+                let _ = tauri::async_runtime::block_on(keeping);
+                runtime.stop();
                 app.state::<Addons>().stop_all();
             }
         })

@@ -106,7 +106,7 @@ By default, nothing: the model, your documents and your memory notes stay on you
 | Qwen 3 4B | 2.5 GB | 6 GB or more |
 | Granite 4.2 3B, with weaker drafts | 2.2 GB | 4 GB or more |
 
-The app offers the largest model that fits your computer, holds less text at once on a smaller one, and unloads the model after 10 minutes without use. Each model has its own license, shown before you download it.
+The app offers the largest model that fits your computer, holds less text at once on a smaller one, and unloads the model after 10 minutes without use. Before unloading, and when you quit, it keeps what the model had read of the conversation, a file of a few hundred megabytes beside your conversations, so the next answer starts quickly instead of reading everything again. Deleting a conversation deletes that file too. Each model has its own license, shown before you download it.
 
 ## Getting started
 
