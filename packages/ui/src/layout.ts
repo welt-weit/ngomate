@@ -81,4 +81,26 @@ export function replaceActive(layout: Layout, id: string): Layout {
 	return { panes, focused: layout.focused }
 }
 
+/**
+ * Puts a conversation in a given pane, before the tab `before` or at the end: what dropping it on a
+ * tab bar does. One open elsewhere moves, and a pane left empty by that closes. The target is named
+ * by its id, which stays right when an emptied pane before it goes.
+ */
+export function placeTab(layout: Layout, paneId: string, id: string, before?: string): Layout {
+	if (before === id) return layout
+	const from = paneOf(layout, id)
+	const target = layout.panes.find((pane) => pane.id === paneId)
+	if (!target) return layout
+	const moved = from >= 0 && layout.panes[from]?.id !== paneId ? closeTab(layout, id) : layout
+	if (!moved) return layout
+	const panes = moved.panes.map((pane) => {
+		if (pane.id !== paneId) return pane
+		const tabs = pane.tabs.filter((tab) => tab !== id)
+		const at = before ? tabs.indexOf(before) : -1
+		tabs.splice(at < 0 ? tabs.length : at, 0, id)
+		return { ...pane, tabs, active: id }
+	})
+	return { panes, focused: panes.findIndex((pane) => pane.id === paneId) }
+}
+
 export const activeId = (layout: Layout): string | undefined => layout.panes[layout.focused]?.active

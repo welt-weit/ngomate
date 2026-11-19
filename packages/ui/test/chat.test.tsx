@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 import type { ChatRequest, ModelClient, ModelReply, ToolSource } from '@ngomate/core'
-import { cleanup, render, renderHook, screen, waitFor, within } from '@testing-library/react'
+import {
+	cleanup,
+	createEvent,
+	fireEvent,
+	render,
+	renderHook,
+	screen,
+	waitFor,
+	within,
+} from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { connectionProblem, splitCommand } from '../src/AddonsPanel.js'
@@ -437,6 +446,80 @@ describe('chat', () => {
 		])
 		await userEvent.keyboard('{Escape}')
 		expect(screen.queryByRole('button', { name: 'Save as file' })).toBeNull()
+	})
+
+	it('opens a conversation dragged from the list onto a tab bar, and ignores anything else dropped there', async () => {
+		const { host } = makeHost([say('Done.')])
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Hi')
+		await screen.findByText('Done.')
+		await userEvent.click(screen.getByRole('button', { name: 'New conversation side by side' }))
+		await waitFor(() => expect(document.querySelectorAll('.ngm-pane')).toHaveLength(2))
+
+		// jsdom has no DataTransfer; this carries what a real drag would.
+		const transfer = () => {
+			const data = new Map<string, string>()
+			return {
+				types: [] as string[],
+				effectAllowed: '',
+				dropEffect: '',
+				setData(type: string, value: string) {
+					data.set(type, value)
+					this.types.push(type)
+				},
+				getData: (type: string) => data.get(type) ?? '',
+			}
+		}
+		const bars = () => [...document.querySelectorAll<HTMLElement>('.ngm-tabs')]
+		const right = bars()[1] as HTMLElement
+
+		// A file or text from outside, and a conversation id this window does not have, open nothing.
+		const foreign = transfer()
+		foreign.setData('text/plain', 'hello')
+		fireEvent.dragOver(right, { dataTransfer: foreign })
+		fireEvent.drop(right, { dataTransfer: foreign })
+		const unknown = transfer()
+		unknown.setData('application/x-ngomate-conversation', 'not-a-conversation')
+		fireEvent.dragOver(right, { dataTransfer: unknown })
+		fireEvent.drop(right, { dataTransfer: unknown })
+		expect(document.querySelectorAll('.ngm-pane')).toHaveLength(2)
+		expect(document.querySelectorAll('.ngm-tab')).toHaveLength(2)
+
+		const item = document.querySelector('.ngm-side-item') as HTMLElement
+		const drag = transfer()
+		fireEvent.dragStart(item, { dataTransfer: drag })
+		fireEvent.dragOver(right, { dataTransfer: drag })
+		expect(right.classList.contains('ngm-tabs-dropping')).toBe(true)
+		fireEvent.drop(right, { dataTransfer: drag })
+
+		// It moved: the pane it left was empty and closed, and it is now the tab in use beside the new one.
+		await waitFor(() => expect(document.querySelectorAll('.ngm-pane')).toHaveLength(1))
+		expect(document.querySelectorAll('.ngm-tab')).toHaveLength(2)
+		expect(document.querySelector('.ngm-tab-active')?.getAttribute('title')).toBe(
+			item.querySelector('button')?.textContent,
+		)
+		expect(document.querySelector('.ngm-tabs-dropping')).toBeNull()
+		expect(screen.getByText('Done.')).toBeTruthy()
+
+		// Within a bar, the left half of a tab means before it and the right half after it.
+		const tabs = () => [...document.querySelectorAll<HTMLElement>('.ngm-tab')]
+		const titles = () => tabs().map((tab) => tab.getAttribute('title'))
+		const [first, second] = titles()
+		const dropOnFirst = (clientX: number) => {
+			const target = tabs()[0] as HTMLElement
+			target.getBoundingClientRect = () => ({ left: 0, width: 100 }) as DOMRect
+			const move = transfer()
+			fireEvent.dragStart(tabs()[1] as HTMLElement, { dataTransfer: move })
+			// jsdom has no DragEvent either, so the pointer position is set on the event by hand.
+			const over = createEvent.dragOver(target, { dataTransfer: move })
+			Object.defineProperty(over, 'clientX', { value: clientX })
+			fireEvent(target, over)
+			fireEvent.drop(target, { dataTransfer: move })
+		}
+		dropOnFirst(80)
+		expect(titles()).toEqual([first, second])
+		dropOnFirst(20)
+		expect(titles()).toEqual([second, first])
 	})
 
 	it('carries on without a connector that cannot be reached, and names it', async () => {

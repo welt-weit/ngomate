@@ -6,6 +6,7 @@ import {
 	focusTab,
 	openBeside,
 	openTab,
+	placeTab,
 	replaceActive,
 	singleLayout,
 } from '../src/layout.js'
@@ -66,5 +67,30 @@ describe('layout', () => {
 		const layout = replaceActive(openTab(singleLayout('a'), 'empty'), 'b')
 		expect(shape(layout)).toEqual([{ tabs: ['a', 'b'], active: 'b' }])
 		expect(shape(replaceActive(layout, 'a'))).toEqual([{ tabs: ['a', 'b'], active: 'a' }])
+	})
+
+	it('places a dropped conversation in that pane, where it was dropped, moving it from another', () => {
+		let layout = openBeside(openTab(singleLayout('a'), 'b'), 'c')
+		const [, right] = layout.panes
+		layout = placeTab(layout, right?.id ?? '', 'x')
+		expect(shape(layout)[1]).toEqual({ tabs: ['c', 'x'], active: 'x' })
+		layout = placeTab(layout, right?.id ?? '', 'b', 'c')
+		expect(shape(layout)).toEqual([
+			{ tabs: ['a'], active: 'a' },
+			{ tabs: ['b', 'c', 'x'], active: 'b' },
+		])
+		expect(layout.focused).toBe(1)
+		// Moving the last tab out of a pane closes it, and the target is still found by its id.
+		layout = placeTab(layout, right?.id ?? '', 'a')
+		expect(layout.panes.map((pane) => pane.id)).toEqual([right?.id])
+		expect(layout.focused).toBe(0)
+	})
+
+	it('reorders within a pane', () => {
+		const layout = openTab(openTab(singleLayout('a'), 'b'), 'c')
+		const pane = layout.panes[0]?.id ?? ''
+		expect(shape(placeTab(layout, pane, 'c', 'a'))).toEqual([
+			{ tabs: ['c', 'a', 'b'], active: 'c' },
+		])
 	})
 })

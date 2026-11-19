@@ -2,6 +2,7 @@ import type { PromptDefinition, TaskFile } from '@ngomate/core'
 import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react'
 import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatStart } from './Chat.js'
+import { TabBar, startConversationDrag } from './TabBar.js'
 import { UpdateNotice } from './UpdateNotice.js'
 import { makeId } from './format.js'
 import { DEFAULT_SETTINGS, type NgomateHost, type Settings } from './host.js'
@@ -13,6 +14,7 @@ import {
 	focusTab,
 	openBeside,
 	openTab,
+	placeTab,
 	replaceActive,
 	singleLayout,
 } from './layout.js'
@@ -303,7 +305,13 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				<h2 className="ngm-side-title">Conversations</h2>
 				<div className="ngm-side-list">
 					{conversations.map((conversation) => (
-						<div className="ngm-side-item" key={conversation.id}>
+						<div
+							className="ngm-side-item"
+							key={conversation.id}
+							draggable
+							title="Drag onto a tab bar to open it there"
+							onDragStart={(event) => startConversationDrag(event, conversation.id)}
+						>
 							<Button
 								variant="nav"
 								active={view === 'chat' && conversation.id === shown}
@@ -323,6 +331,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 							<Button
 								variant="quiet"
 								aria-label={`Delete ${conversation.title}`}
+								title="Delete"
 								onClick={async () => {
 									await host.removeConversation(conversation.id)
 									close(conversation.id)
@@ -367,49 +376,22 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 							onFocusCapture={() => focusPane(paneIndex)}
 							onMouseDownCapture={() => focusPane(paneIndex)}
 						>
-							<div className="ngm-tabs" role="tablist">
-								{pane.tabs.map((id) => (
-									<div className={`ngm-tab${id === pane.active ? ' ngm-tab-active' : ''}`} key={id}>
-										<button
-											type="button"
-											role="tab"
-											aria-selected={id === pane.active}
-											className="ngm-tab-title"
-											onClick={() => setLayout((current) => focusTab(current, paneIndex, id))}
-										>
-											{titleOf(id)}
-										</button>
-										<button
-											type="button"
-											className="ngm-tab-close"
-											aria-label={`Close ${titleOf(id)}`}
-											onClick={() => close(id)}
-										>
-											×
-										</button>
-									</div>
-								))}
-								<span className="ngm-grow" />
-								<button
-									type="button"
-									className="ngm-tab-add"
-									aria-label="New conversation in this pane"
-									title="New conversation"
-									onClick={() => startNew()}
-								>
-									+
-								</button>
-								<button
-									type="button"
-									className="ngm-tab-add"
-									aria-label="New conversation side by side"
-									title="New conversation side by side"
-									disabled={layout.panes.length >= MAX_PANES}
-									onClick={() => startNew(null, true)}
-								>
-									◫
-								</button>
-							</div>
+							<TabBar
+								pane={pane}
+								titleOf={titleOf}
+								onSelect={(id) => setLayout((current) => focusTab(current, paneIndex, id))}
+								onClose={close}
+								onNew={() => startNew()}
+								onSplit={() => startNew(null, true)}
+								canSplit={layout.panes.length < MAX_PANES}
+								onDrop={(id, before) => {
+									// Only a conversation this window has: an id carried in from elsewhere opens nothing.
+									const known =
+										conversations.some((conversation) => conversation.id === id) ||
+										layout.panes.some((open) => open.tabs.includes(id))
+									if (known) setLayout((current) => placeTab(current, pane.id, id, before))
+								}}
+							/>
 							{pane.tabs.map((id) => (
 								<div
 									className="ngm-chat-holder"

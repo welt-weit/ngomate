@@ -123,8 +123,9 @@
 	align-items: center;
 }
 
-.ngm-side-item > :first-child {
-	flex: 1;
+/* More specific than .ngm-button.ngm-nav, which would otherwise keep the title from shrinking. */
+.ngm-side-item > .ngm-button:first-child {
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -133,6 +134,11 @@
 
 .ngm-side-item > :not(:first-child) {
 	flex: 0 0 auto;
+}
+
+/* Its actions show where the pointer or keyboard is, so the titles get the room. */
+.ngm-side-item:not(:hover):not(:focus-within) > :not(:first-child) {
+	opacity: 0;
 }
 
 .ngm-update {
@@ -213,66 +219,149 @@
 
 .ngm-tabs {
 	display: flex;
-	flex: 0 0 auto;
+	flex: 0 0 38px;
 	align-items: stretch;
-	gap: 2px;
-	padding: 4px 6px 0;
-	overflow-x: auto;
+	min-width: 0;
 	background: var(--ngm-panel);
 	border-bottom: 1px solid var(--ngm-line);
 }
 
-.ngm-tab {
+.ngm-tabs-dropping {
+	background: color-mix(in srgb, var(--ngm-accent) 10%, var(--ngm-panel));
+}
+
+/* Many tabs scroll sideways, without a scrollbar taking the bar's height. */
+.ngm-tab-list {
 	display: flex;
+	flex: 1;
+	align-items: stretch;
+	min-width: 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+}
+
+.ngm-tab-list::-webkit-scrollbar {
+	display: none;
+}
+
+.ngm-tab {
+	position: relative;
+	display: flex;
+	flex: 0 1 auto;
 	align-items: center;
+	gap: 2px;
+	min-width: 110px;
 	max-width: 220px;
-	border: 1px solid transparent;
-	border-bottom: none;
-	border-radius: var(--ngm-radius) var(--ngm-radius) 0 0;
+	padding: 0 4px 0 12px;
+	color: var(--ngm-muted);
+	cursor: default;
+	border-right: 1px solid var(--ngm-line);
 }
 
-.ngm-tab-active {
+.ngm-tab:hover {
+	color: var(--ngm-text, inherit);
+	background: color-mix(in srgb, var(--ngm-bg) 50%, var(--ngm-panel));
+}
+
+.ngm-tab-active,
+.ngm-tab-active:hover {
+	color: var(--ngm-text, inherit);
 	background: var(--ngm-bg);
-	border-color: var(--ngm-line);
-	margin-bottom: -1px;
 }
 
-.ngm-pane-focused .ngm-tab-active {
-	box-shadow: inset 0 2px 0 var(--ngm-accent, currentColor);
+/* The active tab is marked on top; in the pane in use, in the accent colour. */
+.ngm-tab-active::before {
+	position: absolute;
+	inset: 0 0 auto;
+	height: 2px;
+	content: "";
+	background: var(--ngm-line);
 }
 
-.ngm-tab-title,
-.ngm-tab-close,
-.ngm-tab-add {
-	padding: 6px 8px;
+.ngm-pane-focused .ngm-tab-active::before {
+	background: var(--ngm-accent);
+}
+
+/* Where a dragged conversation will land. */
+.ngm-tab-drop-before::after {
+	position: absolute;
+	top: 6px;
+	bottom: 6px;
+	left: -1px;
+	width: 2px;
+	content: "";
+	background: var(--ngm-accent);
+	border-radius: 1px;
+}
+
+.ngm-tab-title {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	overflow: hidden;
 	font: inherit;
 	font-size: 13px;
 	color: inherit;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 	cursor: pointer;
 	background: none;
 	border: none;
 }
 
-.ngm-tab-title {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+.ngm-tab-close,
+.ngm-tab-icon {
+	position: relative;
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	color: var(--ngm-muted);
+	cursor: pointer;
+	background: none;
+	border: none;
+	border-radius: 6px;
 }
 
-.ngm-tab:not(.ngm-tab-active) .ngm-tab-title,
-.ngm-tab-close,
-.ngm-tab-add {
-	color: var(--ngm-muted);
+.ngm-tab-close {
+	width: 22px;
+	height: 22px;
+	opacity: 0;
+}
+
+.ngm-tab:hover .ngm-tab-close,
+.ngm-tab-active .ngm-tab-close,
+.ngm-tab-close:focus-visible {
+	opacity: 1;
+}
+
+.ngm-tab-icon {
+	width: 30px;
+	height: 30px;
+	margin: auto 4px;
 }
 
 .ngm-tab-close:hover,
-.ngm-tab-add:hover:not(:disabled) {
-	color: inherit;
+.ngm-tab-icon:hover:not(:disabled) {
+	color: var(--ngm-text, inherit);
+	background: var(--ngm-line);
 }
 
-.ngm-tab-add:disabled {
+.ngm-tab-icon:disabled {
 	cursor: default;
-	opacity: 0.4;
+	opacity: 0.35;
+}
+
+.ngm-tab-split {
+	margin-left: auto;
+}
+
+.ngm-side-item[draggable="true"] {
+	cursor: grab;
 }
 
 .ngm-chat-holder {
