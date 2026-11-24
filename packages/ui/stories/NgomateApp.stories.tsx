@@ -1,7 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { userEvent, within } from 'storybook/test'
 import { NgomateApp } from '../src/NgomateApp.js'
-import { DRAFT, SAMPLE_CONVERSATION, call, createFakeHost, fakeModels, say } from './fakeHost.js'
+import {
+	DRAFT,
+	SAMPLE_CONVERSATION,
+	call,
+	createFakeHost,
+	fakeModels,
+	say,
+} from '../src/preview-host.js'
 
 const meta: Meta<typeof NgomateApp> = { title: 'App', component: NgomateApp }
 export default meta
@@ -245,5 +252,27 @@ export const UpdateReady: Story = {
 				},
 			}),
 		},
+	},
+}
+
+export const InTwoTeams: Story = {
+	args: {
+		host: createFakeHost({ teams: ['Riverside Water Group', 'Coalition for Clean Rivers'] }),
+	},
+}
+
+export const SettingsPage: Story = {
+	args: { host: createFakeHost({ teams: ['Riverside Water Group'] }) },
+	play: async ({ canvasElement }) => {
+		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Settings' }))
+	},
+}
+
+export const TeamSettings: Story = {
+	args: { host: createFakeHost({ teams: ['Riverside Water Group'] }) },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement)
+		await userEvent.click(await canvas.findByRole('button', { name: 'Settings' }))
+		await userEvent.click(await canvas.findByRole('button', { name: 'Teams' }))
 	},
 }

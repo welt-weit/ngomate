@@ -5,6 +5,8 @@ import type {
 	ModelClient,
 	ModelTiming,
 	TaskFile,
+	TeamFile,
+	TeamStore,
 	ToolSource,
 	ToolTiming,
 } from '@ngomate/core'
@@ -101,6 +103,14 @@ export type Settings = {
 	wholeAnswers?: boolean
 	/** The tabs and panes open when the app was last used, opened again on the next launch. */
 	layout?: StoredLayout
+	/** The name this person goes by in a team, shown to the others as information only. */
+	yourName?: string
+	/** The sidebar is folded to a strip of icons. */
+	sidebarCollapsed?: boolean
+	/** Sidebar sections folded away, by name: `tasks`, `conversations`, `connector:<name>`. */
+	foldedSections?: string[]
+	/** The version of each team task this person last ran, by team and task, so a change is shown. */
+	teamTasksSeen?: Record<string, string>
 }
 
 export const DEFAULT_SETTINGS: Settings = { model: null, addons: [] }
@@ -180,6 +190,93 @@ export type AvailableUpdate = {
 	install(onProgress: (fraction: number | null) => void): Promise<void>
 }
 
+/** Where a team keeps its notes and tasks. Addresses and names only: secrets stay with the host. */
+export type TeamLocation =
+	| { type: 'folder'; path: string }
+	/** A connector offering the team memory tools, by its id under Connectors. */
+	| { type: 'connector'; addonId: string }
+	| { type: 's3'; endpoint: string; region: string; bucket: string; accessKeyId: string }
+	| { type: 'webdav'; url: string; user: string }
+
+/** A team this person is in, as the host keeps it. */
+export type TeamMembership = {
+	id: string
+	/** The team's name as last read, so the switcher can name a team it cannot reach right now. */
+	name: string | null
+	location: TeamLocation
+	/** False when the storage did not refuse a write over a changed note when it was tested. */
+	refusesOverwrites: boolean
+}
+
+/**
+ * The teams this person is in, one of them active. A host without it leaves this out, and the app is
+ * for one person. The host keeps the locations itself: the interface asks it to choose one, never
+ * hands it a path. Adding a team makes it the active one; everything else acts on the active one.
+ */
+export interface TeamHost {
+	teams(): Promise<{ active: string | null; teams: TeamMembership[] }>
+	switchTo(id: string): Promise<void>
+	/** Remembers the active team's name for the switcher. */
+	label(name: string): Promise<void>
+	location(): Promise<TeamLocation | null>
+	/** Asks for a team's shared folder and adds that team. Null when the person cancels. */
+	chooseFolder(): Promise<string | null>
+	/**
+	 * Uses storage reached over the network or a connector. With a secret, the host checks it can list
+	 * the notes before keeping anything, and keeps the secret in the keychain.
+	 */
+	use(location: Exclude<TeamLocation, { type: 'folder' }>, secret?: string): Promise<void>
+	/**
+	 * Leaves the active team on this computer and forgets its secret, going back to the team active
+	 * before. The team's files stay where they are.
+	 */
+	forget(): Promise<void>
+	/** The host's own storage: a folder, S3 or WebDAV. A connector is reached by the app instead. */
+	store: TeamStore
+	/** The team file with the version it was read at, for changing it. */
+	readTeamFile(): Promise<{ team: TeamFile; version: string } | null>
+	/** Throws `TeamConflict` when the file is no longer the version read. */
+	writeTeamFile(team: TeamFile, expected: string | null): Promise<void>
+	/**
+	 * Nextcloud's own sign-in, in the person's browser: `start` gives the page to open, `wait` returns
+	 * once they have signed in, with a password Nextcloud made for this app. A host without it leaves
+	 * them out, and a WebDAV password is typed instead.
+	 */
+	nextcloudLogin?: {
+		start(server: string): Promise<{ loginUrl: string; pollUrl: string; token: string }>
+		wait(
+			pollUrl: string,
+			token: string,
+		): Promise<{ server: string; loginName: string; appPassword: string }>
+	}
+	/**
+	 * For a host that opens `ngomate://join` links: calls back with each link, including one the app
+	 * was started with. Returns a function that stops listening. Without it, invites are pasted.
+	 */
+	onInvite?(listener: (link: string) => void): () => void
+}
+
+/** A command from the host's own menus, such as the macOS menu bar. */
+export type MenuCommand =
+	| { type: 'new-conversation'; beside: boolean }
+	| { type: 'close-tab' }
+	| { type: 'attach' }
+	| { type: 'show'; page: 'chat' | 'model' | 'addons' | 'memory' | 'team' }
+	| { type: 'switch-team'; id: string }
+	| { type: 'add-team' }
+	| { type: 'copy-invite' }
+	| { type: 'check-updates' }
+	| { type: 'toggle-sidebar' }
+
+/** What the host's menus show that only the interface knows. */
+export type MenuState = {
+	teams: { id: string; name: string | null }[]
+	activeId: string | null
+	canInvite: boolean
+	/** So the View menu can say Show Sidebar or Hide Sidebar. */
+	sidebarCollapsed: boolean
+}
+
 /**
  * What a host app provides. The interface knows nothing about Tauri or any backend, so the same
  * components can sit in any window that fills this in.
@@ -207,6 +304,12 @@ export interface NgomateHost {
 	setSecret(name: string, value: string): Promise<void>
 	deleteSecret(name: string): Promise<void>
 	models?: ModelHost
+	team?: TeamHost
+	/** For a host with menus of its own: their commands, and what to show in them. */
+	menu?: {
+		onCommand(listener: (command: MenuCommand) => void): () => void
+		update(state: MenuState): void
+	}
 	/**
 	 * For a host that can update itself: a newer version, or null when there is none. Nothing is
 	 * installed until the person chooses to. A host that cannot update leaves this out.

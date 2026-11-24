@@ -1,13 +1,28 @@
-import type { ChatRequest, MemoryStore, ModelReply, ToolSource } from '@ngomate/core'
+import {
+	type ChatRequest,
+	type MemoryStore,
+	type ModelReply,
+	type TeamStore,
+	type ToolSource,
+	newTeamFile,
+	parseTeamFile,
+	serializeTeamFile,
+} from '@ngomate/core'
 import {
 	type Conversation,
 	DEFAULT_SETTINGS,
 	type ModelHost,
 	type NgomateHost,
 	type Settings,
-} from '../src/host.js'
+	type TeamHost,
+	type TeamMembership,
+} from './host.js'
 
-/** All of this is made up. It lets every screen be seen without a model or a desktop app. */
+/**
+ * A host where everything is made up: a scripted model, sample conversations, notes and teams, all in
+ * memory and gone on reload. For seeing every screen without a model or a desktop app, in Storybook
+ * and in the browser preview.
+ */
 export const say = (content: string): ModelReply => ({
 	content,
 	toolCalls: [],
@@ -193,6 +208,73 @@ export type FakeHostOptions = {
 	conversations?: Conversation[]
 	notes?: Record<string, string>
 	models?: ModelHost
+	/** Teams this person is in, by name, each kept in a made-up shared folder. The first is active. */
+	teams?: string[]
+}
+
+/** Teams in memory, each in its own made-up folder, with a team file and nothing else. */
+function fakeTeams(names: string[]): TeamHost {
+	const files = new Map<string, Map<string, { text: string; version: string }>>()
+	let next = 1
+	const memberships: TeamMembership[] = names.map((name, index) => {
+		const path = `/Shared/${name}`
+		files.set(
+			path,
+			new Map([['team', { text: serializeTeamFile(newTeamFile(name, null)), version: 'v0' }]]),
+		)
+		return {
+			id: `team-${index}`,
+			name,
+			location: { type: 'folder', path },
+			refusesOverwrites: true,
+		}
+	})
+	let active = memberships[0]?.id ?? null
+	const here = () => {
+		const team = memberships.find((membership) => membership.id === active)
+		return (team?.location.type === 'folder' && files.get(team.location.path)) || new Map()
+	}
+	const store: TeamStore = {
+		list: async (area) =>
+			[...here()]
+				.filter(([key]) => key.startsWith(`${area}/`))
+				.map(([key, file]) => ({
+					name: key.slice(area.length + 1),
+					version: file.version,
+					updatedAt: null,
+					bytes: file.text.length,
+				})),
+		read: async (area, name) => here().get(`${area}/${name}`) ?? null,
+		async write(area, name, text) {
+			const version = `v${next++}`
+			here().set(`${area}/${name}`, { text, version })
+			return { version }
+		},
+		remove: async (area, name) => void here().delete(`${area}/${name}`),
+		readTeamFile: async () => {
+			const file = here().get('team')
+			return file ? parseTeamFile(file.text) : null
+		},
+	}
+	return {
+		teams: async () => ({ active, teams: memberships }),
+		switchTo: async (id) => {
+			active = id
+		},
+		label: async () => {},
+		location: async () =>
+			memberships.find((membership) => membership.id === active)?.location ?? null,
+		chooseFolder: async () => null,
+		use: async () => {},
+		forget: async () => {},
+		store,
+		readTeamFile: async () => {
+			const file = here().get('team')
+			return file ? { team: parseTeamFile(file.text), version: file.version } : null
+		},
+		writeTeamFile: async (team) =>
+			void here().set('team', { text: serializeTeamFile(team), version: `v${next++}` }),
+	}
 }
 
 export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
@@ -210,6 +292,7 @@ export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 		tasks: TASKS,
 		memory: memoryStore(options.notes ?? {}),
 		models: options.models,
+		team: fakeTeams(options.teams ?? []),
 		loadSettings: async () => settings,
 		saveSettings: async (next) => {
 			settings = next

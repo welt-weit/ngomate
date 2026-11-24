@@ -2,9 +2,11 @@ import {
 	type ChatMessage,
 	type ConfirmWrite,
 	type ModelClient,
+	TEAM_TOOLS,
 	type TaskFile,
 	type TaskProfile,
 	type TaskRun,
+	type TeamNotes,
 	type ToolSource,
 	type WriteRequest,
 	buildMemoryContext,
@@ -140,7 +142,9 @@ export type SendOptions = {
 	prompt?: { title: string; text: string }
 }
 
-export type PendingWrite = WriteRequest & { resolve: (approved: boolean) => void }
+export type PendingWrite = WriteRequest & {
+	resolve: (answer: boolean | { choice: string }) => void
+}
 
 export type ChatDeps = {
 	host: NgomateHost
@@ -155,17 +159,25 @@ export type ChatDeps = {
 	onSaved: () => void
 	/** A request started or ended, so a host can tell when a model is idle. */
 	onBusyChange?: (busy: boolean) => void
+	/**
+	 * The person's team, when they are in one: its notes beside their own, and its tasks. `addonId` is
+	 * the connector that holds them, if one does: its team tools are reached through memory only.
+	 */
+	team?: { notes: TeamNotes; tasks: TaskFile[]; addonId?: string }
 }
+
+const TEAM_TOOL_NAMES = new Set<string>(Object.values(TEAM_TOOLS))
 
 function connectTools(
 	host: NgomateHost,
 	addons: Addon[],
 	withMemory: boolean,
 	onProblem: (name: string) => void,
+	team?: { notes: TeamNotes; addonId?: string },
 ): Promise<ToolSource> {
 	return (async () => {
 		const sources = withMemory
-			? [{ id: 'memory', source: createMemoryToolSource(host.memory) }]
+			? [{ id: 'memory', source: createMemoryToolSource(host.memory, team?.notes) }]
 			: []
 		for (const addon of addons.filter((candidate) => candidate.enabled)) {
 			try {
@@ -176,7 +188,9 @@ function connectTools(
 						source,
 						(tool) =>
 							!addon.disabledTools?.includes(tool.name) &&
-							(addon.allowDestructive || !isDestructiveTool(tool)),
+							(addon.allowDestructive || !isDestructiveTool(tool)) &&
+							// Saved through the memory tools, where the person picks; never written around them.
+							!(addon.id === team?.addonId && TEAM_TOOL_NAMES.has(tool.name)),
 					),
 				})
 			} catch {
@@ -329,10 +343,17 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				const attachments = blocks.map((block) => block.text).join('\n\n')
 				const seen = new Set<string>()
 				// A ready-made task gets notes as context, not as tools that distract a small model from the job.
-				tools = await connectTools(host, depsRef.current.settings.addons, !task, (name) => {
-					if (!seen.has(name)) setProblems((known) => [...known, name])
-					seen.add(name)
-				})
+				const team = depsRef.current.team
+				tools = await connectTools(
+					host,
+					depsRef.current.settings.addons,
+					!task,
+					(name) => {
+						if (!seen.has(name)) setProblems((known) => [...known, name])
+						seen.add(name)
+					},
+					team,
+				)
 				const confirmWrite: ConfirmWrite = (request) =>
 					new Promise((resolve) => {
 						const onAbort = () => {
@@ -350,7 +371,11 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						})
 					})
 
-				const memory = await buildMemoryContext(host.memory, room.memory).catch(() => '')
+				const memory = await buildMemoryContext(
+					host.memory,
+					room.memory,
+					team ? { notes: team.notes, question: passageQuery(text, current.messages) } : undefined,
+				).catch(() => '')
 				const context = [
 					`Today is ${new Date().toISOString().slice(0, 10)}.`,
 					connectedServices(depsRef.current.settings.addons),
@@ -500,7 +525,9 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 		const before = <T>(record: Record<number, T> = {}) =>
 			Object.fromEntries(Object.entries(record).filter(([index]) => Number(index) < at))
 		const taskId = conversation.tasks?.[at]
-		const task = taskId ? host.tasks.find((known) => known.id === taskId) : undefined
+		const task = taskId
+			? [...host.tasks, ...(depsRef.current.team?.tasks ?? [])].find((known) => known.id === taskId)
+			: undefined
 		return send(
 			question.content,
 			{ task },

@@ -1,11 +1,23 @@
 import type { PromptDefinition, TaskFile } from '@ngomate/core'
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+	type CSSProperties,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatStart } from './Chat.js'
+import { ProfileMenu } from './ProfileMenu.js'
+import { SettingsPage, type SettingsSection } from './Settings.js'
 import { TabBar, startConversationDrag } from './TabBar.js'
+import { TeamPanel } from './TeamPanel.js'
 import { UpdateNotice } from './UpdateNotice.js'
-import { makeId } from './format.js'
-import { DEFAULT_SETTINGS, type NgomateHost, type Settings } from './host.js'
+import { makeId, promptLabel } from './format.js'
+import { DEFAULT_SETTINGS, type MenuCommand, type NgomateHost, type Settings } from './host.js'
+import { ICONS, Icon } from './icons.js'
 import {
 	type Layout,
 	MAX_PANES,
@@ -31,13 +43,19 @@ import {
 } from './primitives.js'
 import { selectAllInConversation } from './select-all.js'
 import { useIdleUnload } from './useIdleUnload.js'
+import { type TeamTask, useTeam } from './useTeam.js'
 
-type View = 'chat' | 'model' | 'addons' | 'memory'
+/** The conversations, the notes, or the settings. */
+type View = 'chat' | 'memory' | 'settings'
 
 const newestFirst = <T extends { updatedAt: string }>(listed: T[]) =>
 	[...listed].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 
-type ConnectorPrompt = PromptDefinition & { run: (args: Record<string, string>) => Promise<string> }
+type ConnectorPrompt = PromptDefinition & {
+	/** The connector it comes from, as named under Connectors. */
+	source: string
+	run: (args: Record<string, string>) => Promise<string>
+}
 
 function PromptForm({
 	prompt,
@@ -59,7 +77,7 @@ function PromptForm({
 				}
 			}}
 		>
-			<strong>{prompt.name}</strong>
+			<strong>{promptLabel(prompt)}</strong>
 			{prompt.arguments.map((argument) => (
 				<label key={argument.name}>
 					{argument.description || argument.name}
@@ -115,9 +133,14 @@ export function NgomateApp({ theme, primitives, ...props }: NgomateAppProps) {
 }
 
 function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | 'embedded'>) {
-	const { Button } = usePrimitives()
+	const { Button, Dialog } = usePrimitives()
 	const [settings, setSettings] = useState<Settings | null>(null)
 	const [view, setView] = useState<View>('chat')
+	const [section, setSection] = useState<SettingsSection>('model')
+	const openSettings = (at: SettingsSection) => {
+		setSection(at)
+		setView('settings')
+	}
 	const [layout, setLayout] = useState<Layout>(() => singleLayout(makeId('chat')))
 	const [conversations, setConversations] = useState<
 		{ id: string; title: string; updatedAt: string }[]
@@ -126,6 +149,19 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	const [start, setStart] = useState<{ id: string; begin: ChatStart } | null>(null)
 	const [prompts, setPrompts] = useState<ConnectorPrompt[]>([])
 	const [openPrompt, setOpenPrompt] = useState<ConnectorPrompt | null>(null)
+	// A team task anyone in the team can change is shown before it runs for the first time after a change.
+	const [checkTask, setCheckTask] = useState<TeamTask | null>(null)
+	// An invite link opened from outside, waiting for the person on the Team page.
+	const [incomingInvite, setIncomingInvite] = useState<string | null>(null)
+	useEffect(
+		() =>
+			host.team?.onInvite?.((link) => {
+				setIncomingInvite(link)
+				setSection('team')
+				setView('settings')
+			}),
+		[host],
+	)
 
 	// The kept layout is saved again only once it has been read, or the fresh one would replace it.
 	const [restored, setRestored] = useState(false)
@@ -189,6 +225,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						for (const prompt of (await source.listPrompts?.()) ?? []) {
 							found.push({
 								...prompt,
+								source: addon.name,
 								run: async (args) => {
 									const connected = await host.connectAddon(addon)
 									try {
@@ -237,6 +274,12 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		}
 	}, [host, settings?.model])
 
+	const team = useTeam(host, settings?.addons)
+	const teamNotes = team.notes
+	// Two teams can each have a task file of the same name.
+	const seenKey = (item: TeamTask) => `${team.activeId}/${item.task.id}`
+	const teamAddonId = team.location?.type === 'connector' ? team.location.addonId : undefined
+	const teamTasks = useMemo(() => team.tasks.map((item) => item.task), [team.tasks])
 	const deps = useMemo(
 		() => ({
 			host,
@@ -244,8 +287,18 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			getModel,
 			onSaved: refreshConversations,
 			onBusyChange,
+			team: teamNotes ? { notes: teamNotes, tasks: teamTasks, addonId: teamAddonId } : undefined,
 		}),
-		[host, settings, getModel, refreshConversations, onBusyChange],
+		[
+			host,
+			settings,
+			getModel,
+			refreshConversations,
+			onBusyChange,
+			teamNotes,
+			teamTasks,
+			teamAddonId,
+		],
 	)
 
 	const saved = (id: string) => conversations.some((conversation) => conversation.id === id)
@@ -281,6 +334,66 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	const titleOf = (id: string) =>
 		conversations.find((conversation) => conversation.id === id)?.title ?? 'New conversation'
 	const shown = activeId(layout)
+
+	// Menu commands that a page or the conversation in front carries out: each new request counts up.
+	const [requests, setRequests] = useState({ attach: 0, update: 0 })
+	// For the Team page, which may only open because of it: carried out once there, then cleared.
+	const [teamAction, setTeamAction] = useState<'add' | 'copy-invite' | null>(null)
+	const ask = (what: keyof typeof requests) =>
+		setRequests((current) => ({ ...current, [what]: current[what] + 1 }))
+	/** Changes a setting on top of the newest ones, so a menu command or a quick second click loses nothing. */
+	const patchSettings = useCallback(
+		(change: (current: Settings) => Partial<Settings>) => {
+			const current = settingsRef.current
+			if (current) updateSettings({ ...current, ...change(current) })
+		},
+		[updateSettings],
+	)
+	const toggleSidebar = useCallback(
+		() => patchSettings((current) => ({ sidebarCollapsed: !current.sidebarCollapsed })),
+		[patchSettings],
+	)
+	const onMenu = useRef<(command: MenuCommand) => void>(() => {})
+	onMenu.current = (command) => {
+		switch (command.type) {
+			case 'new-conversation':
+				return startNew(null, command.beside)
+			case 'close-tab':
+				return shown ? close(shown) : undefined
+			case 'attach':
+				setView('chat')
+				return ask('attach')
+			case 'show':
+				if (command.page === 'chat' || command.page === 'memory') return setView(command.page)
+				return openSettings(command.page)
+			case 'switch-team':
+				return void team.switchTo(command.id)
+			case 'add-team':
+				openSettings('team')
+				return setTeamAction('add')
+			case 'copy-invite':
+				openSettings('team')
+				return setTeamAction('copy-invite')
+			case 'check-updates':
+				return ask('update')
+			case 'toggle-sidebar':
+				return toggleSidebar()
+		}
+	}
+	useEffect(() => host.menu?.onCommand((command) => onMenu.current(command)), [host])
+	const menuTeams = JSON.stringify(
+		team.memberships.map((membership) => ({ id: membership.id, name: membership.name })),
+	)
+	const canInvite = Boolean(team.file && team.location)
+	const sidebarCollapsed = settings?.sidebarCollapsed === true
+	useEffect(() => {
+		host.menu?.update({
+			teams: JSON.parse(menuTeams),
+			activeId: team.activeId,
+			canInvite,
+			sidebarCollapsed,
+		})
+	}, [host, menuTeams, team.activeId, canInvite, sidebarCollapsed])
 	// Kept in first-opened order, so a tab moving between panes never moves its chat on the page.
 	const opened = useRef<string[]>([])
 	const openIds = layout.panes.flatMap((pane) => pane.tabs)
@@ -292,112 +405,212 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 
 	if (!settings) return <div className="ngm-loading">Loading…</div>
 
-	const nav = (target: View, label: string) => (
+	const mark = !embedded && host.logo && (
+		<picture>
+			<source srcSet={host.logo.dark} media="(prefers-color-scheme: dark)" />
+			<img src={host.logo.light} alt="" />
+		</picture>
+	)
+	const profile = (
+		<ProfileMenu
+			host={host}
+			settings={settings}
+			team={team}
+			onSettings={(at) => openSettings(at ?? section)}
+			onAddTeam={() => {
+				openSettings('team')
+				setTeamAction('add')
+			}}
+			onCheckUpdates={() => ask('update')}
+		/>
+	)
+
+	/** A button that is only an icon. Its label is what a screen reader says and the tooltip shows. */
+	const iconButton = (label: string, path: string, onClick: () => void, active = false) => (
 		<Button
-			variant="nav"
-			active={view === target}
-			aria-current={view === target ? 'page' : undefined}
-			onClick={() => setView(target)}
+			variant="quiet"
+			className="ngm-icon-button"
+			aria-label={label}
+			title={label}
+			active={active}
+			aria-current={active ? 'page' : undefined}
+			onClick={onClick}
 		>
-			{label}
+			<Icon path={path} />
 		</Button>
+	)
+
+	const folded = new Set(settings.foldedSections ?? [])
+	const toggleFold = (key: string) =>
+		patchSettings((current) => {
+			const now = current.foldedSections ?? []
+			return {
+				foldedSections: now.includes(key) ? now.filter((name) => name !== key) : [...now, key],
+			}
+		})
+	/** A sidebar section whose title folds it away; which are folded is kept between launches. */
+	const foldable = (key: string, title: string, children: ReactNode) => (
+		<section className="ngm-side-section" key={key}>
+			<h2 className="ngm-side-title">
+				<Button
+					variant="quiet"
+					className="ngm-side-toggle"
+					aria-expanded={!folded.has(key)}
+					onClick={() => toggleFold(key)}
+				>
+					<span className="ngm-side-toggle-text">{title}</span>
+					<Icon path={ICONS.chevron} size={12} />
+				</Button>
+			</h2>
+			{!folded.has(key) && children}
+		</section>
 	)
 
 	return (
 		<>
-			<aside className="ngm-sidebar">
-				{!embedded && (
-					<h1 className="ngm-brand">
-						{host.logo && (
-							<picture>
-								<source srcSet={host.logo.dark} media="(prefers-color-scheme: dark)" />
-								<img src={host.logo.light} alt="" />
-							</picture>
-						)}
-						{host.appName}
-					</h1>
-				)}
-				<Button variant="primary" onClick={() => startNew()}>
-					New conversation
-				</Button>
-
-				<h2 className="ngm-side-title">Ready-made tasks</h2>
-				{host.tasks.map((task: TaskFile) => (
-					<Button
-						variant="nav"
-						key={task.id}
-						title={task.description}
-						onClick={() => startNew({ task })}
-					>
-						{task.title}
-					</Button>
-				))}
-				{prompts.map((prompt) => (
-					<Button
-						variant="nav"
-						key={prompt.name}
-						title={prompt.description}
-						onClick={() => {
-							if (prompt.arguments.length) setOpenPrompt(prompt)
-							else
-								prompt
-									.run({})
-									.then((text) => startNew({ prompt: { definition: prompt, text } }))
-									.catch(() => setOpenPrompt(prompt))
-						}}
-					>
-						{prompt.name}
-					</Button>
-				))}
-
-				<h2 className="ngm-side-title">Conversations</h2>
-				<div className="ngm-side-list">
-					{conversations.map((conversation) => (
-						<div
-							className="ngm-side-item"
-							key={conversation.id}
-							draggable
-							title="Drag onto a tab bar to open it there"
-							onDragStart={(event) => startConversationDrag(event, conversation.id)}
-						>
-							<Button
-								variant="nav"
-								active={view === 'chat' && conversation.id === shown}
-								onClick={() => show(conversation.id)}
-							>
-								{conversation.title}
-							</Button>
-							<Button
-								variant="quiet"
-								aria-label={`Open ${conversation.title} side by side`}
-								title="Open side by side"
-								disabled={layout.panes.length >= MAX_PANES}
-								onClick={() => show(conversation.id, true)}
-							>
-								◫
-							</Button>
-							<Button
-								variant="quiet"
-								aria-label={`Delete ${conversation.title}`}
-								title="Delete"
-								onClick={async () => {
-									await host.removeConversation(conversation.id)
-									close(conversation.id)
-									await refreshConversations()
-								}}
-							>
-								×
-							</Button>
+			{/* One element either way, so the update notice at its end stays as it is when it collapses. */}
+			<aside
+				className={`ngm-sidebar${sidebarCollapsed ? ' ngm-sidebar-collapsed' : ''}`}
+				aria-label="Sidebar"
+			>
+				{sidebarCollapsed ? (
+					<>
+						{iconButton('Show the sidebar', ICONS.sidebar, toggleSidebar)}
+						{iconButton('New conversation', ICONS.plus, () => startNew())}
+						{iconButton('Memory', ICONS.memory, () => setView('memory'), view === 'memory')}
+						{profile}
+					</>
+				) : (
+					<>
+						<div className="ngm-side-head">
+							{!embedded && (
+								<h1 className="ngm-brand">
+									{mark}
+									{host.appName}
+								</h1>
+							)}
+							{iconButton('Memory', ICONS.memory, () => setView('memory'), view === 'memory')}
+							{profile}
+							{iconButton('Hide the sidebar', ICONS.sidebar, toggleSidebar)}
 						</div>
-					))}
-				</div>
+						<Button variant="primary" onClick={() => startNew()}>
+							New conversation
+						</Button>
 
-				<UpdateNotice host={host} />
-				<div className="ngm-side-bottom">
-					{nav('model', 'Model')}
-					{nav('addons', 'Connectors')}
-					{nav('memory', 'Memory')}
-				</div>
+						{/* Tasks and conversations scroll together; each section folds away. */}
+						<div className="ngm-side-scroll">
+							{foldable(
+								'tasks',
+								'Ready-made tasks',
+								<>
+									{host.tasks.map((task: TaskFile) => (
+										<Button
+											variant="nav"
+											key={task.id}
+											title={task.description}
+											onClick={() => startNew({ task })}
+										>
+											{task.title}
+										</Button>
+									))}
+									{team.tasks.map((item) => (
+										<Button
+											variant="nav"
+											key={item.task.id}
+											title={`${item.task.description} (from your team)`}
+											onClick={() => {
+												if (
+													item.version &&
+													settings.teamTasksSeen?.[seenKey(item)] === item.version
+												) {
+													startNew({ task: item.task })
+												} else {
+													setCheckTask(item)
+												}
+											}}
+										>
+											{item.task.title} <span className="ngm-muted">· team</span>
+										</Button>
+									))}
+								</>,
+							)}
+							{[...new Set(prompts.map((prompt) => prompt.source))].map((source) =>
+								foldable(
+									`connector:${source}`,
+									`From ${source}`,
+									prompts
+										.filter((prompt) => prompt.source === source)
+										.map((prompt) => (
+											<Button
+												variant="nav"
+												key={prompt.name}
+												title={prompt.description}
+												onClick={() => {
+													if (prompt.arguments.length) setOpenPrompt(prompt)
+													else
+														prompt
+															.run({})
+															.then((text) => startNew({ prompt: { definition: prompt, text } }))
+															.catch(() => setOpenPrompt(prompt))
+												}}
+											>
+												{promptLabel(prompt)}
+											</Button>
+										)),
+								),
+							)}
+							{foldable(
+								'conversations',
+								'Conversations',
+								<div className="ngm-side-list">
+									{conversations.map((conversation) => (
+										<div
+											className="ngm-side-item"
+											key={conversation.id}
+											draggable
+											title="Drag onto a tab bar to open it there"
+											onDragStart={(event) => startConversationDrag(event, conversation.id)}
+										>
+											<Button
+												variant="nav"
+												active={view === 'chat' && conversation.id === shown}
+												onClick={() => show(conversation.id)}
+											>
+												{conversation.title}
+											</Button>
+											<div className="ngm-side-actions">
+												<Button
+													variant="quiet"
+													className="ngm-icon-button"
+													aria-label={`Open ${conversation.title} side by side`}
+													title="Open side by side"
+													disabled={layout.panes.length >= MAX_PANES}
+													onClick={() => show(conversation.id, true)}
+												>
+													<Icon path={ICONS.split} size={14} />
+												</Button>
+												<Button
+													variant="quiet"
+													className="ngm-icon-button"
+													aria-label={`Delete ${conversation.title}`}
+													title="Delete"
+													onClick={async () => {
+														await host.removeConversation(conversation.id)
+														close(conversation.id)
+														await refreshConversations()
+													}}
+												>
+													<Icon path={ICONS.close} size={14} />
+												</Button>
+											</div>
+										</div>
+									))}
+								</div>,
+							)}
+						</div>
+					</>
+				)}
+				<UpdateNotice host={host} checkRequest={requests.update} />
 			</aside>
 
 			<main className="ngm-main">
@@ -470,19 +683,80 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 									deps={deps}
 									conversationId={id}
 									start={start?.id === id ? start.begin : null}
+									attachRequest={id === shown ? requests.attach : 0}
 									onStarted={clearStart}
 								/>
 							</div>
 						)
 					})}
 				</div>
-				{view === 'model' && (
-					<ModelPanel host={host} settings={settings} onChange={updateSettings} />
+				{view === 'memory' && <MemoryPanel host={host} teamNotes={team.notes} />}
+				{view === 'settings' && (
+					<SettingsPage
+						host={host}
+						settings={settings}
+						onChange={updateSettings}
+						section={section}
+						onSection={setSection}
+						onCheckUpdates={() => ask('update')}
+						sections={{
+							model: <ModelPanel host={host} settings={settings} onChange={updateSettings} />,
+							addons: (
+								<AddonsPanel
+									host={host}
+									settings={settings}
+									onChange={updateSettings}
+									teamSuggests={team.file?.connectors}
+								/>
+							),
+							team: host.team && (
+								<TeamPanel
+									host={{ ...host, team: host.team }}
+									settings={settings}
+									onChange={updateSettings}
+									team={team}
+									onOpenConnectors={() => setSection('addons')}
+									incomingInvite={incomingInvite}
+									onInviteSeen={() => setIncomingInvite(null)}
+									action={teamAction}
+									onActionDone={() => setTeamAction(null)}
+								/>
+							),
+						}}
+					/>
 				)}
-				{view === 'addons' && (
-					<AddonsPanel host={host} settings={settings} onChange={updateSettings} />
+				{checkTask && (
+					<Dialog title={checkTask.task.title} onClose={() => setCheckTask(null)}>
+						<p>
+							{settings.teamTasksSeen?.[seenKey(checkTask)]
+								? 'Someone in your team changed this task since you last ran it.'
+								: 'This task comes from your team. Anyone in the team can change it.'}{' '}
+							Read what it tells the assistant to do before running it.
+						</p>
+						<pre className="ngm-pre">{checkTask.text}</pre>
+						<div className="ngm-row">
+							<Button
+								variant="primary"
+								onClick={() => {
+									if (checkTask.version) {
+										updateSettings({
+											...settings,
+											teamTasksSeen: {
+												...settings.teamTasksSeen,
+												[seenKey(checkTask)]: checkTask.version,
+											},
+										})
+									}
+									startNew({ task: checkTask.task })
+									setCheckTask(null)
+								}}
+							>
+								Run it
+							</Button>
+							<Button onClick={() => setCheckTask(null)}>Cancel</Button>
+						</div>
+					</Dialog>
 				)}
-				{view === 'memory' && <MemoryPanel host={host} />}
 			</main>
 		</>
 	)

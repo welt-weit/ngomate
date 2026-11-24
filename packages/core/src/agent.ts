@@ -7,8 +7,15 @@ import {
 	lookUpKnowledge,
 } from './knowledge.js'
 import { extractLinks, findUnsourcedLinks } from './links.js'
-import type { ToolResult, ToolSource } from './mcp.js'
-import type { ChatMessage, ModelClient, ModelTiming, ToolCall, ToolDefinition } from './model.js'
+import type { CallContext, ToolResult, ToolSource } from './mcp.js'
+import type {
+	ChatMessage,
+	ModelClient,
+	ModelTiming,
+	ToolCall,
+	ToolDefinition,
+	WriteChoice,
+} from './model.js'
 import { chooseTools, compactTool } from './toolChoice.js'
 
 /**
@@ -40,10 +47,18 @@ export type TaskProfile = {
 	preload?: { tool: string; args: Record<string, unknown> }[]
 }
 
-export type WriteRequest = { tool: string; args: Record<string, unknown> }
+export type WriteRequest = {
+	tool: string
+	args: Record<string, unknown>
+	/** Options to pick between, the first being the default. Absent when there is nothing to pick. */
+	choices?: WriteChoice[]
+}
 
-/** Asked before every write. There is no default: a host that passes nothing cannot write. */
-export type ConfirmWrite = (request: WriteRequest) => Promise<boolean>
+/**
+ * Asked before every write. There is no default: a host that passes nothing cannot write. A write with
+ * choices is approved with the picked option's id; plain `true` takes the first.
+ */
+export type ConfirmWrite = (request: WriteRequest) => Promise<boolean | { choice: string }>
 
 export type AgentEvent =
 	| {
@@ -657,8 +672,17 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 		}
 
 		emit?.({ type: 'tool_call', tool: call.name, args, kind })
+		let context: CallContext | undefined
 		if (kind === 'write') {
-			const approved = confirmWrite ? await confirmWrite({ tool: call.name, args }) : false
+			const choices = offered.find((tool) => tool.name === call.name)?.annotations?.choices
+			const answer = confirmWrite
+				? await confirmWrite({ tool: call.name, args, ...(choices?.length ? { choices } : {}) })
+				: false
+			const picked = typeof answer === 'object' ? answer.choice : choices?.[0]?.id
+			// An answer naming an option that was not offered is not an approval of anything.
+			const approved =
+				answer !== false && (!choices?.length || choices.some((choice) => choice.id === picked))
+			if (approved && choices?.length) context = { choice: picked }
 			if (!approved) {
 				return refuse(
 					'declined',
@@ -671,7 +695,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 
 		let result: ToolResult
 		try {
-			result = await source.callTool(call.name, args)
+			result = await source.callTool(call.name, args, ...(context ? [context] : []))
 		} catch (err) {
 			result = { text: err instanceof Error ? err.message : String(err), isError: true }
 		}

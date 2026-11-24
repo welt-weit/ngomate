@@ -11,13 +11,18 @@ export type ToolResult = {
 /** A ready-made task a connector offers. */
 export type PromptDefinition = {
 	name: string
+	/** The name for people, when the server gives one. */
+	title?: string
 	description: string
 	arguments: { name: string; description: string; required: boolean }[]
 }
 
+/** What the person decided while confirming a write, passed beside the model's arguments. */
+export type CallContext = { choice?: string }
+
 export interface ToolSource {
 	listTools(): Promise<ToolDefinition[]>
-	callTool(name: string, args: Record<string, unknown>): Promise<ToolResult>
+	callTool(name: string, args: Record<string, unknown>, context?: CallContext): Promise<ToolResult>
 	/** Absent or empty when the source offers no ready-made tasks. */
 	listPrompts?(): Promise<PromptDefinition[]>
 	getPrompt?(name: string, args: Record<string, string>): Promise<string>
@@ -142,6 +147,7 @@ export async function connectMcpToolSource(options: McpToolSourceOptions): Promi
 				const page = await client.listPrompts(cursor ? { cursor } : {})
 				for (const prompt of page.prompts) {
 					prompts.push({
+						...(typeof prompt.title === 'string' && prompt.title ? { title: prompt.title } : {}),
 						name: prompt.name,
 						description: prompt.description ?? '',
 						arguments: (prompt.arguments ?? []).map((argument) => ({

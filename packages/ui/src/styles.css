@@ -4,6 +4,13 @@
  * variable is set. A host with no theme of its own also imports default-theme.css.
  */
 .ngm-app {
+	/* Every gap comes from this scale, and every list row has this height. */
+	--ngm-space-1: 4px;
+	--ngm-space-2: 8px;
+	--ngm-space-3: 12px;
+	--ngm-space-4: 16px;
+	--ngm-space-5: 24px;
+	--ngm-row: 28px;
 	display: flex;
 	height: 100%;
 	font-family: var(--ngm-font, inherit);
@@ -17,6 +24,31 @@
 .ngm-app *::before,
 .ngm-app *::after {
 	box-sizing: border-box;
+}
+
+/* Scrollbars in the theme's colours: the system draws light grey ones on any background. Firefox has
+   only the standard properties; WebKit and Chrome would let them override the drawn ones. */
+@supports not selector(::-webkit-scrollbar) {
+	.ngm-app * {
+		scrollbar-color: var(--ngm-line) transparent;
+		scrollbar-width: thin;
+	}
+}
+
+.ngm-app ::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+.ngm-app ::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.ngm-app ::-webkit-scrollbar-thumb {
+	background: var(--ngm-line);
+	background-clip: padding-box;
+	border: 2px solid transparent;
+	border-radius: 999px;
 }
 
 /*
@@ -57,7 +89,7 @@
 }
 
 .ngm-button {
-	padding: 6px 12px;
+	padding: var(--ngm-space-1) var(--ngm-space-3);
 	cursor: pointer;
 	background: var(--ngm-bg);
 	border: 1px solid var(--ngm-line);
@@ -87,7 +119,7 @@
 }
 
 .ngm-button.ngm-quiet {
-	padding: 2px 6px;
+	padding: 2px var(--ngm-space-2);
 	color: var(--ngm-muted);
 	background: none;
 	border: none;
@@ -95,10 +127,23 @@
 
 .ngm-input {
 	width: 100%;
-	padding: 8px 10px;
+	padding: var(--ngm-space-1) var(--ngm-space-2);
 	background: var(--ngm-bg);
 	border: 1px solid var(--ngm-line);
 	border-radius: var(--ngm-radius);
+}
+
+/* Drawn here, not by the system: the Mac's web view otherwise shows its own grey pop-up button, and
+   each browser a different one. The chevron is two gradients, so it takes the theme's colours. */
+select.ngm-input {
+	appearance: none;
+	padding-right: 32px;
+	background-color: var(--ngm-bg);
+	background-image: linear-gradient(45deg, transparent 50%, var(--ngm-muted) 50%),
+		linear-gradient(135deg, var(--ngm-muted) 50%, transparent 50%);
+	background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+	background-size: 5px 5px;
+	background-repeat: no-repeat;
 }
 
 .ngm-loading {
@@ -108,47 +153,223 @@
 
 .ngm-sidebar {
 	display: flex;
-	flex: 0 0 260px;
+	flex: 0 0 248px;
 	flex-direction: column;
-	gap: 4px;
-	padding: 14px;
+	gap: var(--ngm-space-2);
+	/* The head row on the tab bar's centre line: (32px bar - 28px row) / 2. */
+	padding: 2px var(--ngm-space-3) var(--ngm-space-3);
 	overflow: hidden;
+	font-size: 14px;
 	background: var(--ngm-panel);
 	border-right: 1px solid var(--ngm-line);
+}
+
+.ngm-sidebar-collapsed {
+	flex-basis: 48px;
+	align-items: center;
+	gap: var(--ngm-space-1);
+	padding: 2px var(--ngm-space-2) var(--ngm-space-3);
+}
+
+/* The strip is too narrow for the update notice, so it opens beside it, at the bottom. */
+.ngm-sidebar-collapsed {
+	position: relative;
+	overflow: visible;
+}
+
+.ngm-sidebar-collapsed .ngm-update {
+	position: absolute;
+	z-index: 10;
+	bottom: var(--ngm-space-3);
+	left: calc(100% + var(--ngm-space-2));
+	width: 240px;
+	box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
 }
 
 .ngm-brand {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	margin: 0 0 10px;
-	font-size: 18px;
+	gap: var(--ngm-space-2);
+	margin: 0;
+	font-size: 16px;
 }
 
 .ngm-brand img {
 	display: block;
-	height: 28px;
+	height: 24px;
 	width: auto;
 }
 
+/* A button that is only an icon, the size of a list row. */
+.ngm-button.ngm-icon-button {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	width: var(--ngm-row);
+	height: var(--ngm-row);
+	padding: 0;
+}
+
+.ngm-button.ngm-quiet.ngm-icon-button:hover,
+.ngm-button.ngm-quiet.ngm-icon-button.ngm-nav-active {
+	color: var(--ngm-text, inherit);
+	background: var(--ngm-line);
+}
+
 .ngm-side-title {
-	margin: 16px 0 4px;
+	margin: var(--ngm-space-2) 0 0;
+	padding-left: var(--ngm-space-2);
 	font-size: 12px;
 	font-weight: 600;
 	color: var(--ngm-muted);
 }
 
-.ngm-side-list {
+/* The person's initials in a circle, the size of an icon. */
+.ngm-avatar {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+	color: var(--ngm-accent-text);
+	background: var(--ngm-accent);
+	border-radius: 50%;
+}
+
+.ngm-button.ngm-avatar-button[aria-expanded="true"] {
+	background: var(--ngm-line);
+}
+
+.ngm-profile-head {
+	display: flex;
+	align-items: center;
+	gap: var(--ngm-space-2);
+	padding: var(--ngm-space-2);
+}
+
+.ngm-profile-head .ngm-avatar {
+	width: 32px;
+	height: 32px;
+	font-size: 13px;
+}
+
+.ngm-profile-who {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	line-height: 1.35;
+}
+
+.ngm-profile-who .ngm-muted {
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ngm-popover-panel:has(.ngm-profile-head) {
+	width: 288px;
+}
+
+.ngm-popover-title {
+	margin: var(--ngm-space-2) 0 0;
+	padding: var(--ngm-space-1) var(--ngm-space-2);
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--ngm-muted);
+}
+
+.ngm-popover-note {
+	margin: 0;
+	padding: var(--ngm-space-1) var(--ngm-space-2);
+	font-size: 13px;
+	color: var(--ngm-muted);
+}
+
+.ngm-popover-line {
+	width: 100%;
+	margin: var(--ngm-space-1) 0;
+	border: none;
+	border-top: 1px solid var(--ngm-line);
+}
+
+/* The active team's tick at the end of its row, so every line of the panel starts at one edge. */
+.ngm-button.ngm-profile-team {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--ngm-space-2);
+}
+
+.ngm-profile-check {
+	display: inline-flex;
+	flex: 0 0 14px;
+	color: var(--ngm-accent);
+}
+
+/* A section title folds its section; the chevron points down while it is open. */
+.ngm-button.ngm-quiet.ngm-side-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--ngm-space-1);
+	width: 100%;
+	padding: var(--ngm-space-1) var(--ngm-space-1) var(--ngm-space-1) var(--ngm-space-2);
+	font-size: 12px;
+	font-weight: 600;
+	text-align: left;
+}
+
+/* The toggle carries the inset itself, so its hover reaches the edge. */
+.ngm-side-title:has(> .ngm-side-toggle) {
+	padding-left: 0;
+}
+
+.ngm-side-toggle-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ngm-side-toggle svg {
+	flex: 0 0 auto;
+	transition: transform 0.15s;
+}
+
+.ngm-side-toggle[aria-expanded="true"] svg {
+	transform: rotate(90deg);
+}
+
+.ngm-side-section {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.ngm-side-scroll {
 	display: flex;
 	flex: 1;
 	flex-direction: column;
-	gap: 2px;
+	gap: var(--ngm-space-1);
 	min-height: 0;
 	overflow-x: hidden;
 	overflow-y: auto;
 }
 
+.ngm-side-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
 .ngm-side-item {
+	position: relative;
 	display: flex;
 	align-items: center;
 }
@@ -162,21 +383,35 @@
 	white-space: nowrap;
 }
 
-.ngm-side-item > :not(:first-child) {
-	flex: 0 0 auto;
+.ngm-side-item:hover > .ngm-button:first-child {
+	background: var(--ngm-line);
 }
 
-/* Its actions show where the pointer or keyboard is, so the titles get the room. */
-.ngm-side-item:not(:hover):not(:focus-within) > :not(:first-child) {
+/* Its actions lie over the end of the title where the pointer or keyboard is, so the titles get the
+   whole row. Hidden ones stay in the tab order. */
+.ngm-side-actions {
+	position: absolute;
+	inset: 0 0 0 auto;
+	display: flex;
+	align-items: center;
+	background: var(--ngm-line);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-side-item:not(:hover):not(:focus-within) > .ngm-side-actions {
+	pointer-events: none;
 	opacity: 0;
+}
+
+.ngm-side-actions .ngm-button.ngm-quiet.ngm-icon-button:hover {
+	background: var(--ngm-panel);
 }
 
 .ngm-update {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
-	margin-bottom: 10px;
-	padding: 10px 12px;
+	gap: var(--ngm-space-2);
+	padding: var(--ngm-space-2) var(--ngm-space-3);
 	font-size: 13px;
 	background: var(--ngm-panel);
 	border: 1px solid var(--ngm-accent);
@@ -192,18 +427,50 @@
 	color: var(--ngm-muted);
 }
 
-.ngm-side-bottom {
+.ngm-side-head {
 	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.ngm-side-head .ngm-brand {
+	flex: 1;
+	min-width: 0;
+}
+
+/* Everything set up once: the sections beside the one shown. */
+.ngm-settings {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+.ngm-settings-nav {
+	display: flex;
+	flex: 0 0 180px;
 	flex-direction: column;
 	gap: 2px;
-	padding-top: 10px;
-	border-top: 1px solid var(--ngm-line);
+	/* Level with the page beside it, which starts 24px down. */
+	padding: var(--ngm-space-5) var(--ngm-space-3) var(--ngm-space-3);
+	border-right: 1px solid var(--ngm-line);
+}
+
+.ngm-settings-nav .ngm-side-title {
+	margin-top: 0;
+}
+
+.ngm-settings-content {
+	flex: 1;
+	min-width: 0;
+	overflow-y: auto;
 }
 
 .ngm-button.ngm-nav {
 	flex: 0 0 auto;
 	min-width: 0;
-	padding: 5px 8px;
+	min-height: var(--ngm-row);
+	padding: var(--ngm-space-1) var(--ngm-space-2);
+	line-height: 20px;
 	overflow: hidden;
 	text-align: left;
 	text-overflow: ellipsis;
@@ -253,7 +520,7 @@
 
 .ngm-tabs {
 	display: flex;
-	flex: 0 0 38px;
+	flex: 0 0 32px;
 	align-items: stretch;
 	min-width: 0;
 	background: var(--ngm-panel);
@@ -287,7 +554,7 @@
 	gap: 2px;
 	min-width: 110px;
 	max-width: 220px;
-	padding: 0 4px 0 12px;
+	padding: 0 var(--ngm-space-1) 0 var(--ngm-space-3);
 	color: var(--ngm-muted);
 	cursor: default;
 	border-right: 1px solid var(--ngm-line);
@@ -329,39 +596,27 @@
 	border-radius: 1px;
 }
 
-.ngm-tab-title {
+/* The tab bar's controls are quiet Buttons, sized for a 32px bar. */
+.ngm-button.ngm-tab-title {
 	flex: 1;
 	min-width: 0;
 	height: 100%;
 	padding: 0;
 	overflow: hidden;
-	font: inherit;
 	font-size: 13px;
 	color: inherit;
 	text-align: left;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	cursor: pointer;
-	background: none;
-	border: none;
 }
 
-.ngm-tab-close,
-.ngm-tab-icon {
+.ngm-button.ngm-tab-close,
+.ngm-button.ngm-tab-icon {
 	position: relative;
-	display: inline-flex;
-	flex: 0 0 auto;
-	align-items: center;
-	justify-content: center;
-	padding: 0;
-	color: var(--ngm-muted);
-	cursor: pointer;
-	background: none;
-	border: none;
 	border-radius: 6px;
 }
 
-.ngm-tab-close {
+.ngm-button.ngm-tab-close {
 	width: 22px;
 	height: 22px;
 	opacity: 0;
@@ -369,28 +624,26 @@
 
 .ngm-tab:hover .ngm-tab-close,
 .ngm-tab-active .ngm-tab-close,
-.ngm-tab-close:focus-visible {
+.ngm-button.ngm-tab-close:focus-visible {
 	opacity: 1;
 }
 
-.ngm-tab-icon {
-	width: 30px;
-	height: 30px;
-	margin: auto 4px;
+.ngm-button.ngm-tab-icon {
+	width: 26px;
+	height: 26px;
+	margin: auto var(--ngm-space-1);
 }
 
-.ngm-tab-close:hover,
-.ngm-tab-icon:hover:not(:disabled) {
-	color: var(--ngm-text, inherit);
-	background: var(--ngm-line);
-}
-
-.ngm-tab-icon:disabled {
-	cursor: default;
+.ngm-button.ngm-tab-icon:disabled {
 	opacity: 0.35;
 }
 
-.ngm-tab-split {
+.ngm-button.ngm-quiet.ngm-tab-icon:disabled:hover {
+	color: var(--ngm-muted);
+	background: none;
+}
+
+.ngm-button.ngm-tab-split {
 	margin-left: auto;
 }
 
@@ -421,9 +674,9 @@
 	display: flex;
 	flex: 1;
 	flex-direction: column;
-	gap: 12px;
+	gap: var(--ngm-space-3);
 	width: 100%;
-	padding: 24px;
+	padding: var(--ngm-space-5);
 	overflow-y: auto;
 }
 
@@ -445,7 +698,7 @@
 	align-self: flex-end;
 	max-width: 85%;
 	max-height: 320px;
-	padding: 8px 12px;
+	padding: var(--ngm-space-2) var(--ngm-space-3);
 	overflow-y: auto;
 	white-space: pre-wrap;
 	background: var(--ngm-panel);
@@ -488,13 +741,13 @@
 }
 
 .ngm-assistant p {
-	margin: 8px 0;
+	margin: var(--ngm-space-2) 0;
 }
 
 .ngm-assistant ul,
 .ngm-assistant ol {
 	padding-left: 22px;
-	margin: 8px 0;
+	margin: var(--ngm-space-2) 0;
 }
 
 .ngm-assistant ul {
@@ -523,7 +776,7 @@
 
 .ngm-assistant td,
 .ngm-assistant th {
-	padding: 4px 8px;
+	padding: var(--ngm-space-1) var(--ngm-space-2);
 	border: 1px solid var(--ngm-line);
 }
 
@@ -547,8 +800,8 @@
 }
 
 .ngm-notice {
-	padding: 8px 12px;
-	margin: 8px 0;
+	padding: var(--ngm-space-2) var(--ngm-space-3);
+	margin: var(--ngm-space-2) 0;
 	font-size: 13px;
 	color: var(--ngm-warn-text);
 	background: var(--ngm-warn-bg);
@@ -570,7 +823,7 @@
 }
 
 .ngm-confirm {
-	padding: 12px;
+	padding: var(--ngm-space-3);
 	background: var(--ngm-panel);
 	border: 1px solid var(--ngm-accent);
 	border-radius: var(--ngm-radius);
@@ -578,7 +831,7 @@
 
 .ngm-pre {
 	max-height: 280px;
-	padding: 8px;
+	padding: var(--ngm-space-2);
 	overflow: auto;
 	font-size: 13px;
 	white-space: pre-wrap;
@@ -589,24 +842,47 @@
 
 .ngm-composer {
 	width: 100%;
-	padding: 0 24px 16px;
+	padding: 0 var(--ngm-space-5) var(--ngm-space-4);
 }
 
-.ngm-composer textarea {
+.ngm-composer-box {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--ngm-space-1);
+	padding: var(--ngm-space-1) var(--ngm-space-1) var(--ngm-space-1) var(--ngm-space-3);
+	background: var(--ngm-bg);
+	border: 1px solid var(--ngm-line);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-composer-box:focus-within {
+	border-color: var(--ngm-accent);
+}
+
+/* The frame is the field: the text area inside it has none of its own. */
+.ngm-composer-box textarea {
 	display: block;
-	resize: vertical;
+	flex: 1;
+	min-height: var(--ngm-row);
+	padding: var(--ngm-space-1) 0;
+	resize: none;
+	outline: none;
+	background: transparent;
+	border: none;
 }
 
 .ngm-composer-actions {
-	margin-top: 8px;
+	display: flex;
+	flex: 0 0 auto;
+	gap: var(--ngm-space-1);
 }
 
 .ngm-chip-line {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 6px;
+	gap: var(--ngm-space-2);
 	align-items: center;
-	margin-bottom: 6px;
+	margin-bottom: var(--ngm-space-2);
 }
 
 .ngm-chip {
@@ -620,7 +896,7 @@
 .ngm-row {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 8px;
+	gap: var(--ngm-space-2);
 	align-items: center;
 }
 
@@ -636,59 +912,81 @@
 }
 
 .ngm-message-meta {
-	gap: 6px;
-	margin-top: 4px;
+	gap: var(--ngm-space-2);
+	margin-top: var(--ngm-space-1);
 	font-size: 12px;
 	color: var(--ngm-muted);
 }
 
-.ngm-menu {
-	position: relative;
-}
-
-.ngm-menu-list {
-	position: absolute;
-	z-index: 10;
-	top: 100%;
-	right: 0;
+/* A panel opened by a button, placed in the window so no narrow parent cuts it off. */
+.ngm-popover-panel {
+	position: fixed;
+	z-index: 20;
 	display: flex;
 	flex-direction: column;
 	align-items: stretch;
-	min-width: 140px;
-	padding: 4px;
+	min-width: 160px;
+	max-width: calc(100vw - var(--ngm-space-4));
+	margin: 0;
+	padding: var(--ngm-space-1);
+	font-size: 14px;
 	background: var(--ngm-bg);
 	border: 1px solid var(--ngm-line);
-	border-radius: 8px;
+	border-radius: var(--ngm-radius);
 	box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
 }
 
-.ngm-menu-list button {
+.ngm-popover-panel > .ngm-button {
 	justify-content: flex-start;
+	min-height: var(--ngm-row);
+	padding: var(--ngm-space-1) var(--ngm-space-2);
+	color: var(--ngm-text, inherit);
 	text-align: left;
+}
+
+.ngm-popover-panel > .ngm-button:hover,
+.ngm-popover-panel > .ngm-button:focus-visible {
+	background: var(--ngm-line);
 }
 
 .ngm-panel {
 	width: 100%;
 	max-width: 720px;
-	padding: 24px;
+	padding: var(--ngm-space-5);
 	margin: 0 auto;
 }
 
 .ngm-panel h2 {
+	margin: 0;
+}
+
+/* One gap between the parts of a page, so nothing sits on the next thing or floats far from it. */
+.ngm-panel {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ngm-space-3);
+}
+
+.ngm-panel > * {
 	margin-top: 0;
+	margin-bottom: 0;
+}
+
+.ngm-panel > h3 {
+	margin-top: var(--ngm-space-3);
 }
 
 .ngm-panel h3 {
-	margin: 24px 0 8px;
+	margin: var(--ngm-space-5) 0 var(--ngm-space-2);
 	font-size: 15px;
 }
 
 .ngm-card {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
-	padding: 12px;
-	margin-bottom: 10px;
+	gap: var(--ngm-space-2);
+	padding: var(--ngm-space-3);
+	margin-bottom: var(--ngm-space-3);
 	border: 1px solid var(--ngm-line);
 	border-radius: var(--ngm-radius);
 }
@@ -700,21 +998,21 @@
 .ngm-form {
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
-	margin-top: 10px;
+	gap: var(--ngm-space-3);
+	margin-top: var(--ngm-space-3);
 }
 
 .ngm-form label {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
+	gap: var(--ngm-space-1);
 	font-size: 14px;
 }
 
 .ngm-inline {
 	display: inline-flex;
 	flex-direction: row;
-	gap: 6px;
+	gap: var(--ngm-space-2);
 	align-items: center;
 	font-size: 14px;
 }
@@ -722,8 +1020,8 @@
 .ngm-addon-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-	gap: 12px;
-	margin-top: 14px;
+	gap: var(--ngm-space-3);
+	margin-top: var(--ngm-space-3);
 }
 
 .ngm-addon-card {
@@ -735,14 +1033,14 @@
 }
 
 .ngm-addon-card-action {
-	padding-top: 6px;
+	padding-top: var(--ngm-space-2);
 	margin-top: auto;
 }
 
 .ngm-dialog {
 	width: min(480px, calc(100vw - 32px));
 	max-height: calc(100vh - 64px);
-	padding: 20px;
+	padding: var(--ngm-space-5);
 	overflow-y: auto;
 	font-family: var(--ngm-font, inherit);
 	font-size: 15px;
@@ -761,7 +1059,7 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	margin-bottom: 12px;
+	margin-bottom: var(--ngm-space-3);
 }
 
 .ngm-dialog-head h3 {
@@ -774,7 +1072,7 @@
 .ngm-addon-details {
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
+	gap: var(--ngm-space-3);
 }
 
 .ngm-addon-details p {
@@ -789,9 +1087,9 @@
 
 .ngm-tool-switch {
 	display: flex;
-	gap: 8px;
+	gap: var(--ngm-space-2);
 	align-items: flex-start;
-	margin-top: 8px;
+	margin-top: var(--ngm-space-2);
 	font-size: 14px;
 }
 
@@ -806,7 +1104,7 @@
 .ngm-addon-facts {
 	display: grid;
 	grid-template-columns: auto 1fr;
-	gap: 2px 10px;
+	gap: 2px var(--ngm-space-3);
 	margin: 0;
 	font-size: 13px;
 }

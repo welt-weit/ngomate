@@ -28,6 +28,9 @@
 		}
 	},
 	"plugins": {
+		"deep-link": {
+			"desktop": { "schemes": ["ngomate"] }
+		},
 		"updater": {
 			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NDJDNTU5N0FEQjIyMEEKUldRS0l0dDZXY1ZDR1R1TzdabC9HNHkxNjFMcndkdHNlY2YrdEE4dzhXZGVZTGMxTTRTS1dqaUIK",
 			"endpoints": ["https://github.com/welt-weit/ngomate/releases/latest/download/latest.json"],

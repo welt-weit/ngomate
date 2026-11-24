@@ -14,6 +14,7 @@
 	"scripts": {
 		"build": "yarn workspaces foreach -At --include '@ngomate/core' --include '@ngomate/ui' --include '@ngomate/tauri' run build",
 		"desktop": "yarn workspace @ngomate/desktop tauri dev",
+		"preview": "yarn workspace @ngomate/desktop dev",
 		"storybook": "yarn workspace @ngomate/ui storybook",
 		"typecheck": "yarn workspaces foreach -A run typecheck",
 		"lint": "biome lint ./packages ./apps ./scripts",

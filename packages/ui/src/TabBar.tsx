@@ -1,5 +1,7 @@
 import { type DragEvent, useState } from 'react'
+import { ICONS, Icon } from './icons.js'
 import type { Pane } from './layout.js'
+import { usePrimitives } from './primitives.js'
 
 /** What a conversation carries when dragged, from the list or from another tab bar. */
 export const CONVERSATION_DRAG_TYPE = 'application/x-ngomate-conversation'
@@ -11,15 +13,6 @@ export function startConversationDrag(event: DragEvent, id: string) {
 
 const carriesConversation = (event: DragEvent) =>
 	event.dataTransfer.types.includes(CONVERSATION_DRAG_TYPE)
-
-const Icon = ({ path }: { path: string }) => (
-	<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
-		<path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-	</svg>
-)
-const CLOSE = 'M4 4l8 8M12 4l-8 8'
-const PLUS = 'M8 3v10M3 8h10'
-const SPLIT = 'M2.5 3.5h11v9h-11zM8 3.5v9'
 
 type TabBarProps = {
 	pane: Pane
@@ -43,6 +36,7 @@ export function TabBar({
 	canSplit,
 	onDrop,
 }: TabBarProps) {
+	const { Button } = usePrimitives()
 	// Where a dragged conversation would land: before this tab, or 'end'. Null while nothing is dragged over.
 	const [dropAt, setDropAt] = useState<string | null>(null)
 
@@ -100,47 +94,47 @@ export function TabBar({
 								if (event.button === 1) onClose(id)
 							}}
 						>
-							<button
-								type="button"
+							<Button
+								variant="quiet"
 								role="tab"
 								aria-selected={active}
 								className="ngm-tab-title"
 								onClick={() => onSelect(id)}
 							>
 								{title}
-							</button>
-							<button
-								type="button"
-								className="ngm-tab-close"
+							</Button>
+							<Button
+								variant="quiet"
+								className="ngm-icon-button ngm-tab-close"
 								aria-label={`Close ${title}`}
 								title="Close"
 								onClick={() => onClose(id)}
 							>
-								<Icon path={CLOSE} />
-							</button>
+								<Icon path={ICONS.close} size={14} />
+							</Button>
 						</div>
 					)
 				})}
-				<button
-					type="button"
-					className={`ngm-tab-icon${dropAt === 'end' ? ' ngm-tab-drop-before' : ''}`}
+				<Button
+					variant="quiet"
+					className={`ngm-icon-button ngm-tab-icon${dropAt === 'end' ? ' ngm-tab-drop-before' : ''}`}
 					aria-label="New conversation in this pane"
 					title="New conversation"
 					onClick={onNew}
 				>
-					<Icon path={PLUS} />
-				</button>
+					<Icon path={ICONS.plus} size={14} />
+				</Button>
 			</div>
-			<button
-				type="button"
-				className="ngm-tab-icon ngm-tab-split"
+			<Button
+				variant="quiet"
+				className="ngm-icon-button ngm-tab-icon ngm-tab-split"
 				aria-label="New conversation side by side"
 				title={canSplit ? 'New conversation side by side' : 'No room for another pane'}
 				disabled={!canSplit}
 				onClick={onSplit}
 			>
-				<Icon path={SPLIT} />
-			</button>
+				<Icon path={ICONS.split} size={14} />
+			</Button>
 		</div>
 	)
 }

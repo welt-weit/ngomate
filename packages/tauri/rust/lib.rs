@@ -9,6 +9,9 @@ mod guard;
 mod models;
 mod runtime;
 mod store;
+mod team;
+mod team_s3;
+mod team_webdav;
 
 use addons::Addons;
 use error::{Error, Result};
@@ -118,6 +121,183 @@ async fn store_remove<R: TauriRuntime>(
         runtime.forget(&prompt_cache_dir(&app)?).await;
     }
     Ok(())
+}
+
+/// The teams this person is in, kept here: a folder is only ever one the person picked in a native
+/// dialog, never a path the interface hands in.
+fn teams_record<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
+    Ok(data_root(app)?.join("teams.json"))
+}
+
+fn read_teams<R: TauriRuntime>(app: &AppHandle<R>) -> Result<team::Teams> {
+    match std::fs::read_to_string(teams_record(app)?) {
+        Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_default()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(team::Teams::default()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn keep_teams<R: TauriRuntime>(app: &AppHandle<R>, teams: &team::Teams) -> Result<()> {
+    std::fs::create_dir_all(data_root(app)?)?;
+    let text = serde_json::to_string_pretty(teams).map_err(|err| Error::msg(err.to_string()))?;
+    let record = teams_record(app)?;
+    let temp = record.with_extension("json.tmp");
+    std::fs::write(&temp, text)?;
+    std::fs::rename(temp, record)?;
+    Ok(())
+}
+
+/// Each team's key or password, apart from every other team's.
+fn team_secret(id: &str) -> Result<keyring::Entry> {
+    keychain_entry(&format!("team:{id}"))
+}
+
+fn new_team_id() -> String {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    format!("t{nanos:x}")
+}
+
+/// The active team's storage, with its secret from the keychain.
+fn team_store<R: TauriRuntime>(app: &AppHandle<R>) -> Result<team::Store> {
+    let teams = read_teams(app)?;
+    let team = teams.active_team().ok_or_else(|| Error::msg("No team storage is chosen."))?;
+    let secret = || -> Result<String> {
+        team_secret(&team.id)?
+            .get_password()
+            .map_err(|_| Error::msg("The team storage's password or key is missing. Set it up again under Team."))
+    };
+    team::Store::open(&team.location, secret)
+}
+
+#[tauri::command]
+fn teams<R: TauriRuntime>(app: AppHandle<R>) -> Result<team::Teams> {
+    read_teams(&app)
+}
+
+#[tauri::command]
+fn team_location<R: TauriRuntime>(app: AppHandle<R>) -> Result<Option<team::Location>> {
+    Ok(read_teams(&app)?.active_team().map(|team| team.location.clone()))
+}
+
+/// Adds a team kept in a folder the person picks, and makes it the active one.
+#[tauri::command]
+async fn team_folder_choose<R: TauriRuntime>(app: AppHandle<R>) -> Result<Option<String>> {
+    let picked = app.dialog().file().set_title("The team's shared folder").blocking_pick_folder();
+    let Some(path) = picked.and_then(|folder| folder.into_path().ok()) else { return Ok(None) };
+    let path = path.to_string_lossy().into_owned();
+    let mut teams = read_teams(&app)?;
+    teams.add(team::Location::Folder { path: path.clone() }, new_team_id(), true);
+    keep_teams(&app, &teams)?;
+    Ok(Some(path))
+}
+
+/// Adds a team reached over the network or through a connector, and makes it the active one. With a
+/// secret it is checked first: the notes are listed, so a wrong address or key is found here, and a
+/// small test file tells whether the storage refuses to overwrite a change.
+#[tauri::command]
+async fn team_use<R: TauriRuntime>(app: AppHandle<R>, location: team::Location, secret: Option<String>) -> Result<()> {
+    location.check()?;
+    let mut refuses = true;
+    if let Some(secret) = &secret {
+        let store = team::Store::open(&location, || Ok(secret.clone()))?;
+        store.list(team::Area::Notes).await?;
+        refuses = store.refuses_overwrites().await?;
+    }
+    let mut teams = read_teams(&app)?;
+    let id = teams.add(location, new_team_id(), refuses);
+    match &secret {
+        Some(secret) => team_secret(&id)?.set_password(secret).map_err(|err| Error::msg(err.to_string()))?,
+        None => {
+            let _ = team_secret(&id)?.delete_credential();
+        }
+    }
+    keep_teams(&app, &teams)
+}
+
+#[tauri::command]
+fn team_switch<R: TauriRuntime>(app: AppHandle<R>, id: String) -> Result<()> {
+    let mut teams = read_teams(&app)?;
+    teams.switch(&id)?;
+    keep_teams(&app, &teams)
+}
+
+/// Remembers the active team's name, read from its team file, for the switcher.
+#[tauri::command]
+fn team_label<R: TauriRuntime>(app: AppHandle<R>, name: String) -> Result<()> {
+    let mut teams = read_teams(&app)?;
+    if teams.active_team().and_then(|team| team.name.as_deref()) == Some(name.as_str()) {
+        return Ok(());
+    }
+    teams.label_active(&name);
+    keep_teams(&app, &teams)
+}
+
+/// Nextcloud's own sign-in: the address to open in the person's browser, and what to wait on.
+#[tauri::command]
+async fn nextcloud_login_start(server: String) -> Result<team_webdav::LoginStart> {
+    team_webdav::nextcloud_login_start(&server).await
+}
+
+/// Returns once the person has signed in, with the app password Nextcloud made for NGOmate.
+#[tauri::command]
+async fn nextcloud_login_wait(poll_url: String, token: String) -> Result<team_webdav::LoginDone> {
+    team_webdav::nextcloud_login_wait(&poll_url, &token, std::time::Duration::from_secs(15 * 60)).await
+}
+
+/// Leaves the active team on this computer and forgets its secret, going back to the team before. The
+/// team's notes stay where they are.
+#[tauri::command]
+fn team_forget<R: TauriRuntime>(app: AppHandle<R>) -> Result<()> {
+    let mut teams = read_teams(&app)?;
+    if let Some(removed) = teams.forget_active() {
+        let _ = team_secret(&removed.id)?.delete_credential();
+    }
+    keep_teams(&app, &teams)
+}
+
+#[tauri::command]
+async fn team_list<R: TauriRuntime>(app: AppHandle<R>, area: String) -> Result<Vec<team::Entry>> {
+    team_store(&app)?.list(team::Area::parse(&area)?).await
+}
+
+#[tauri::command]
+async fn team_read<R: TauriRuntime>(app: AppHandle<R>, area: String, name: String) -> Result<Option<team::Read>> {
+    team_store(&app)?.read(team::Area::parse(&area)?, &name).await
+}
+
+#[tauri::command]
+async fn team_write<R: TauriRuntime>(
+    app: AppHandle<R>,
+    area: String,
+    name: String,
+    text: String,
+    expected: Option<String>,
+) -> Result<team::Written> {
+    team_store(&app)?.write(team::Area::parse(&area)?, &name, &text, expected.as_deref()).await
+}
+
+#[tauri::command]
+async fn team_remove<R: TauriRuntime>(
+    app: AppHandle<R>,
+    area: String,
+    name: String,
+    expected: Option<String>,
+) -> Result<team::Written> {
+    team_store(&app)?.remove(team::Area::parse(&area)?, &name, expected.as_deref()).await
+}
+
+#[tauri::command]
+async fn team_file_read<R: TauriRuntime>(app: AppHandle<R>) -> Result<Option<team::Read>> {
+    team_store(&app)?.read_team_file().await
+}
+
+#[tauri::command]
+async fn team_file_write<R: TauriRuntime>(
+    app: AppHandle<R>,
+    text: String,
+    expected: Option<String>,
+) -> Result<team::Written> {
+    team_store(&app)?.write_team_file(&text, expected.as_deref()).await
 }
 
 fn keychain_entry(name: &str) -> Result<keyring::Entry> {
@@ -425,6 +605,21 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             addon_start,
             addon_send,
             addon_stop,
+            teams,
+            team_location,
+            team_switch,
+            team_label,
+            team_folder_choose,
+            team_use,
+            team_forget,
+            nextcloud_login_start,
+            nextcloud_login_wait,
+            team_list,
+            team_read,
+            team_write,
+            team_remove,
+            team_file_read,
+            team_file_write,
         ])
         .setup(|app, _api| {
             app.manage(Runtime::default());
@@ -439,8 +634,10 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
                 let runtime = app.state::<Runtime>();
                 // Keeps what the model read, so the first answer after a relaunch is quick. A quit waits
                 // this long at most; a save cut short is dropped at the next start.
-                let keeping = tokio::time::timeout(std::time::Duration::from_secs(2), runtime.stop_and_keep());
-                let _ = tauri::async_runtime::block_on(keeping);
+                // The timer is made inside the async runtime: made outside it, Tokio panics and the quit crashes.
+                tauri::async_runtime::block_on(async {
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), runtime.stop_and_keep()).await;
+                });
                 runtime.stop();
                 app.state::<Addons>().stop_all();
             }

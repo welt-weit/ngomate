@@ -508,7 +508,7 @@ describe('chat', () => {
 		expect(document.querySelectorAll('.ngm-messages time')).toHaveLength(2)
 		const menus = screen.getAllByRole('button', { name: 'More actions' })
 		await userEvent.click(menus[1] as HTMLElement)
-		const menu = within(document.querySelector('.ngm-menu-list') as HTMLElement)
+		const menu = within(screen.getByRole('group', { name: 'More actions' }))
 		expect(menu.getAllByRole('button').map((button) => button.textContent)).toEqual([
 			'Copy',
 			'Save as file',
@@ -918,8 +918,11 @@ describe('connectors', () => {
 		render(<NgomateApp host={host} />)
 		return { saved }
 	}
-	const toConnectors = async () =>
-		userEvent.click(await screen.findByRole('button', { name: 'Connectors' }))
+	const toConnectors = async () => {
+		await userEvent.click(await screen.findByRole('button', { name: 'You and your team' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Settings…' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Connectors' }))
+	}
 
 	it('connects a suggested connector with only a token, and checks it before keeping it', async () => {
 		const connectAddon = vi.fn(async () => tools)
@@ -1072,7 +1075,8 @@ describe('moving around while an answer is written', () => {
 		)
 		render(<NgomateApp host={host} />)
 		await typeAndSend('Write something long')
-		await userEvent.click(await screen.findByRole('button', { name: 'Model' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'You and your team' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Settings…' }))
 		const request = chat.mock.calls[0]?.[0] as ChatRequest
 		expect(request.signal?.aborted).toBe(false)
 		release(say('Finished anyway.'))

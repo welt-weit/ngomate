@@ -20,3 +20,10 @@ export function recommendedModelId(
 export function makeId(prefix: string): string {
 	return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
+
+/** A connector's ready-made task, named for people: the server's title, or its code name made readable. */
+export function promptLabel(prompt: { name: string; title?: string }): string {
+	if (prompt.title) return prompt.title
+	const words = prompt.name.replace(/[_-]+/g, ' ').trim()
+	return words.charAt(0).toUpperCase() + words.slice(1)
+}

@@ -24,6 +24,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 futures-util = "0.3"
 sha2 = "0.10"
 hex = "0.4"
+hmac = "0.12"
 sysinfo = "0.37"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 pdf-extract = "0.9"

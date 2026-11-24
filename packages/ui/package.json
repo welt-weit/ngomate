@@ -8,6 +8,10 @@
 			"types": "./src/index.ts",
 			"default": "./dist/index.js"
 		},
+		"./preview": {
+			"types": "./src/preview-host.ts",
+			"default": "./dist/preview-host.js"
+		},
 		"./styles.css": "./src/styles.css",
 		"./default-theme.css": "./src/default-theme.css"
 	},
@@ -15,7 +19,7 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc --noEmit",
-		"storybook": "storybook dev --port 6006 --no-open",
+		"storybook": "storybook dev --port 6009 --no-open",
 		"build-storybook": "storybook build -o storybook-static"
 	},
 	"dependencies": {

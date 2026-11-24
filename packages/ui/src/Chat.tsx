@@ -11,7 +11,9 @@ import {
 } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { promptLabel } from './format.js'
 import type { AnswerNotice, AnswerTiming, NgomateHost, PickedDocument } from './host.js'
+import { ICONS, Icon } from './icons.js'
 import { usePrimitives } from './primitives.js'
 import { type ChatDeps, type PendingWrite, useChat } from './useChat.js'
 
@@ -30,9 +32,21 @@ function WriteConfirmation({ request }: { request: PendingWrite }) {
 				<pre className="ngm-pre">{JSON.stringify(request.args, null, 2)}</pre>
 			)}
 			<div className="ngm-row">
-				<Button variant="primary" onClick={() => request.resolve(true)}>
-					Allow
-				</Button>
+				{request.choices?.length ? (
+					request.choices.map((choice, index) => (
+						<Button
+							key={choice.id}
+							variant={index === 0 ? 'primary' : 'default'}
+							onClick={() => request.resolve({ choice: choice.id })}
+						>
+							{choice.label}
+						</Button>
+					))
+				) : (
+					<Button variant="primary" onClick={() => request.resolve(true)}>
+						Allow
+					</Button>
+				)}
 				<Button onClick={() => request.resolve(false)}>Don't allow</Button>
 			</div>
 		</div>
@@ -123,53 +137,25 @@ export function formatTime(iso: string, now = new Date()): string {
 
 type MenuItem = { label: string; onSelect: () => void }
 
-/** A "⋯" button that shows a short list of actions. Escape or a click elsewhere closes it. */
+/** A "⋯" button that shows a short list of actions. */
 function MessageMenu({ items }: { items: MenuItem[] }) {
-	const { Button } = usePrimitives()
+	const { Button, Popover } = usePrimitives()
 	const [open, setOpen] = useState(false)
-	const box = useRef<HTMLDivElement>(null)
-	useEffect(() => {
-		if (!open) return
-		const onDown = (event: MouseEvent) => {
-			if (!box.current?.contains(event.target as Node)) setOpen(false)
-		}
-		const onKey = (event: globalThis.KeyboardEvent) => {
-			if (event.key === 'Escape') setOpen(false)
-		}
-		document.addEventListener('mousedown', onDown)
-		document.addEventListener('keydown', onKey)
-		return () => {
-			document.removeEventListener('mousedown', onDown)
-			document.removeEventListener('keydown', onKey)
-		}
-	}, [open])
 	return (
-		<div className="ngm-menu" ref={box}>
-			<Button
-				variant="quiet"
-				aria-label="More actions"
-				aria-expanded={open}
-				onClick={() => setOpen((shown) => !shown)}
-			>
-				⋯
-			</Button>
-			{open && (
-				<div className="ngm-menu-list">
-					{items.map((item) => (
-						<Button
-							key={item.label}
-							variant="quiet"
-							onClick={() => {
-								setOpen(false)
-								item.onSelect()
-							}}
-						>
-							{item.label}
-						</Button>
-					))}
-				</div>
-			)}
-		</div>
+		<Popover label="More actions" trigger="⋯" open={open} onOpenChange={setOpen}>
+			{items.map((item) => (
+				<Button
+					key={item.label}
+					variant="quiet"
+					onClick={() => {
+						setOpen(false)
+						item.onSelect()
+					}}
+				>
+					{item.label}
+				</Button>
+			))}
+		</Popover>
 	)
 }
 
@@ -318,6 +304,12 @@ const MessageView = memo(function MessageView({
 	)
 })
 
+/** The message field grows with its text, up to a third of the window, then scrolls. */
+function fitToText(field: HTMLTextAreaElement) {
+	field.style.height = 'auto'
+	field.style.height = `${Math.min(field.scrollHeight, Math.round(window.innerHeight / 3))}px`
+}
+
 export type ChatStart = { task?: TaskFile; prompt?: { definition: PromptDefinition; text: string } }
 
 export function Chat({
@@ -325,7 +317,15 @@ export function Chat({
 	conversationId,
 	start,
 	onStarted,
-}: { deps: ChatDeps; conversationId: string; start: ChatStart | null; onStarted: () => void }) {
+	attachRequest = 0,
+}: {
+	deps: ChatDeps
+	conversationId: string
+	start: ChatStart | null
+	onStarted: () => void
+	/** Counts up each time the menu asks this conversation to attach a document. */
+	attachRequest?: number
+}) {
 	const { Button, TextArea, Chip } = usePrimitives()
 	const chat = useChat(deps, conversationId)
 	const [text, setText] = useState('')
@@ -362,7 +362,30 @@ export function Chat({
 		shownCount.current = messages.length
 		if (following.current) bottom.current?.scrollIntoView?.({ block: 'end' })
 	}, [chat.conversation.messages.length, chat.streaming, chat.pendingWrite])
+
+	// What is shown can still grow after that: an answer laid out late, a font that loads, a wider
+	// pane. While following the end, it follows that too.
+	const messagesBox = useRef<HTMLDivElement>(null)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: watches the messages shown now
+	useEffect(() => {
+		const box = messagesBox.current
+		if (!box || typeof ResizeObserver === 'undefined') return
+		const watcher = new ResizeObserver(() => {
+			if (following.current) box.scrollTop = box.scrollHeight
+		})
+		for (const child of box.children) watcher.observe(child)
+		watcher.observe(box)
+		return () => watcher.disconnect()
+	}, [chat.conversation.messages.length, chat.pendingWrite])
 	const whole = Boolean(deps.settings.wholeAnswers)
+
+	// Fitted after every change, a cleared one included, so the field shrinks back after sending.
+	const composerBox = useRef<HTMLDivElement>(null)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fitted again whenever the text changes
+	useEffect(() => {
+		const field = composerBox.current?.querySelector('textarea')
+		if (field) fitToText(field)
+	}, [text])
 
 	const submit = async (event?: FormEvent) => {
 		event?.preventDefault()
@@ -370,7 +393,7 @@ export function Chat({
 		const options = {
 			task,
 			documents,
-			prompt: prompt ? { title: prompt.definition.name, text: prompt.text } : undefined,
+			prompt: prompt ? { title: promptLabel(prompt.definition), text: prompt.text } : undefined,
 		}
 		setText('')
 		setDocuments([])
@@ -396,6 +419,14 @@ export function Chat({
 		}
 	}
 
+	// Only a request made while this conversation is in front; one from before it opened is not its own.
+	const seenAttach = useRef(attachRequest)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs for a new request only
+	useEffect(() => {
+		if (attachRequest > seenAttach.current) attach()
+		seenAttach.current = attachRequest
+	}, [attachRequest])
+
 	const { messages, notices, times = {} } = chat.conversation
 	const lastQuestion = messages.findLastIndex((message) => message.role === 'user')
 	const lastAnswer = messages.findLastIndex(
@@ -404,7 +435,7 @@ export function Chat({
 	const retry = chat.busy ? undefined : () => void chat.retry()
 	return (
 		<div className="ngm-chat">
-			<div className="ngm-messages" aria-live="polite" onScroll={onScroll}>
+			<div className="ngm-messages" ref={messagesBox} aria-live="polite" onScroll={onScroll}>
 				{messages.length === 0 && !chat.busy && (
 					<div className="ngm-empty">
 						<h2>What are we working on?</h2>
@@ -485,7 +516,7 @@ export function Chat({
 				)}
 				{prompt && (
 					<div className="ngm-chip-line">
-						<Chip>{prompt.definition.name}</Chip>
+						<Chip>{promptLabel(prompt.definition)}</Chip>
 						<Button variant="quiet" onClick={() => setPrompt(undefined)}>
 							Remove
 						</Button>
@@ -527,26 +558,48 @@ export function Chat({
 						)}
 					</div>
 				))}
-				<TextArea
-					aria-label="Message"
-					value={text}
-					rows={3}
-					placeholder={task ? task.ask : 'Write a message'}
-					onChange={(event) => setText(event.target.value)}
-					onKeyDown={onKey}
-				/>
-				<div className="ngm-row ngm-composer-actions">
-					<Button onClick={attach} disabled={chat.busy}>
-						Attach document
-					</Button>
-					<span className="ngm-grow" />
-					{chat.busy ? (
-						<Button onClick={chat.stop}>Stop</Button>
-					) : (
-						<Button type="submit" variant="primary">
-							Send
+				{/* One frame for the text and its two actions, so no row of buttons sits under it. */}
+				<div className="ngm-composer-box" ref={composerBox}>
+					<TextArea
+						aria-label="Message"
+						value={text}
+						rows={1}
+						placeholder={task ? task.ask : 'Write a message'}
+						onChange={(event) => setText(event.target.value)}
+						onKeyDown={onKey}
+					/>
+					<div className="ngm-composer-actions">
+						<Button
+							variant="quiet"
+							className="ngm-icon-button"
+							aria-label="Attach document"
+							title="Attach a document"
+							onClick={attach}
+							disabled={chat.busy}
+						>
+							<Icon path={ICONS.attach} />
 						</Button>
-					)}
+						{chat.busy ? (
+							<Button
+								className="ngm-icon-button"
+								aria-label="Stop"
+								title="Stop"
+								onClick={chat.stop}
+							>
+								<Icon path={ICONS.stop} />
+							</Button>
+						) : (
+							<Button
+								type="submit"
+								variant="primary"
+								className="ngm-icon-button"
+								aria-label="Send"
+								title="Send (Enter)"
+							>
+								<Icon path={ICONS.send} />
+							</Button>
+						)}
+					</div>
 				</div>
 			</form>
 		</div>

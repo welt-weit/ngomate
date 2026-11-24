@@ -742,7 +742,9 @@ __metadata:
     "@ngomate/core": "workspace:*"
     "@ngomate/tauri": "workspace:*"
     "@ngomate/ui": "workspace:*"
+    "@tauri-apps/api": "npm:^2.10.1"
     "@tauri-apps/cli": "npm:^2.10.1"
+    "@tauri-apps/plugin-deep-link": "npm:^2"
     "@tauri-apps/plugin-opener": "npm:^2.5.0"
     "@tauri-apps/plugin-process": "npm:^2"
     "@tauri-apps/plugin-updater": "npm:^2"
@@ -1458,6 +1460,15 @@ __metadata:
   bin:
     tauri: tauri.js
   checksum: 10c0/e1043cb0b0ab15ce24d1835bd3fc929ed1479d64d784459153d249ffa34a83c9020c4699520950373830112614bc8b71d9257e7db773481e73f73a8b97b69c45
+  languageName: node
+  linkType: hard
+
+"@tauri-apps/plugin-deep-link@npm:^2":
+  version: 2.6.3
+  resolution: "@tauri-apps/plugin-deep-link@npm:2.6.3"
+  dependencies:
+    "@tauri-apps/api": "npm:^2.12.0"
+  checksum: 10c0/2dab2c1966f81d9c40f36e77fe53b79d7a14149509aab44362bafde3840d97a60b49da33774e35789220c3d16d86e198da59b7b0e14cd4fcd722b8c89d41bdff
   languageName: node
   linkType: hard
 

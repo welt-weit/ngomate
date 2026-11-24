@@ -45,6 +45,7 @@ These always point to the latest release. Every version, with the files named by
 - [Download](#download)
 - [What you can do with it](#what-you-can-do-with-it)
 - [Features](#features)
+- [Working as a team](#working-as-a-team)
 - [Knowledge base](#knowledge-base)
 - [What leaves your computer](#what-leaves-your-computer)
 - [Requirements](#requirements)
@@ -72,10 +73,50 @@ Each task is a plain text file, so you can read what it tells the model and chan
 - **Works from your documents**: it reads the PDF, Word and text files you attach and drafts from them, not from what it imagines.
 - **Remembers what you allow**: facts about your organization are kept as plain Markdown notes you can read, edit and delete. It asks before saving anything.
 - **Connects your other tools**: search services, knowledge bases and other tools plug in through the [Model Context Protocol](https://modelcontextprotocol.io). Anything that would change something asks you first.
+- **At home on a Mac**: its commands are in the menu bar with the usual shortcuts, including Settings (⌘,) and switching teams (⌘1 to ⌘9).
 - **Flags what it can't back up**: dates and links that don't come from your material or a tool are marked, so you know what to check.
 
 > [!WARNING]
 > Local models make mistakes, including mixing up real figures. Check names and numbers before you use a draft.
+
+## Working as a team
+
+A team shares memory notes and ready-made tasks through storage it already has. Nothing goes through us. Choose **Team** in the sidebar (or **Settings → Teams**) and pick where the team keeps them:
+
+| Storage | Sign-in | Two people changing the same note |
+|---|---|---|
+| A folder your sync app shares (Google Drive, OneDrive, Dropbox, Nextcloud, Syncthing) | None in NGOmate | Noticed before saving on your computer; a copy your sync app makes is shown to you |
+| A folder on Nextcloud or another WebDAV server | Nextcloud's own sign-in, or a user name and app password | Refused before saving |
+| An S3 bucket (AWS, Cloudflare R2, OVHcloud and other S3-compatible storage) | An access key | Refused before saving, where the provider supports it |
+| A connector that can hold a team (see below) | The connector's own | Refused before saving |
+
+- **Several teams**: you can be in more than one, such as your organization and a coalition, and switch between them with **Team** in the sidebar. The active team's notes and tasks are the ones the assistant uses; your own notes stay the same.
+- **Set up**: name the team and pick the storage. NGOmate adds `ngomate-team.json`, `notes/` and `tasks/` there and gives you an invite to send.
+- **Join**: open the invite link or paste its code under **Settings → Teams**. It says where the team is and never holds a password or key; each person signs in with their own account. NGOmate shows the exact address before you sign in anywhere.
+- **Saving**: a note is yours unless you choose **Save for the team** when NGOmate asks before saving.
+- **What the assistant reads**: your own notes, then the team notes that fit your question.
+- **Team tasks** show up beside the built-in ones. Anyone in the team can change one, so after a change NGOmate shows you what it says before it runs.
+- **Limits**: 10 MB of team notes, 200 KB per note and 1 MB of tasks by default, changeable under **Settings → Teams**. Each person's app keeps to them.
+- **Connectors** the team suggests appear under **Settings → Connectors**. Each person signs in with their own account.
+- **Secrets** (an app password, an access key) stay in your operating system's keychain.
+
+When you connect a bucket or a server, NGOmate saves a small test file twice to see whether the storage refuses to save over a change, removes it again, and tells you under **Settings → Teams** if it does not. Then, if two people save the same note at once, the last save wins.
+
+Who can read and change the team's notes is decided by the storage: whoever has the folder, an account on the server with the folder shared, or a key to the bucket.
+
+### Team memory tools
+
+Any MCP server can hold a team by offering these five tools. Answers are JSON in the tool's text.
+
+| Tool | Arguments | Answer |
+|---|---|---|
+| `get_team` | none | The team file: `{ "format": 1, "name", "createdBy", "limits", "connectors" }` |
+| `list_notes` | `area`: `notes` or `tasks` | `[{ "name", "version", "updatedAt", "bytes" }]` |
+| `read_note` | `area`, `name` | `{ "text", "version" }`, or an error `{ "code": "not_found" }` |
+| `write_note` | `area`, `name`, `text`, `expectedVersion` (`null` for a new note) | `{ "version" }`, or an error `{ "code": "conflict" }` when the note is not at that version |
+| `delete_note` | `area`, `name`, `expectedVersion` | `{}`, or an error `{ "code": "conflict" }` |
+
+Mark `get_team`, `list_notes` and `read_note` with `readOnlyHint`. NGOmate never offers these tools to the model directly: team notes are saved only where the person chooses.
 
 ## Knowledge base
 
@@ -87,7 +128,7 @@ Connect a service that has a knowledge base, and NGOmate can look things up ther
 - The answer names the entries it used, and nothing else is presented as coming from them.
 - If a service is slow or down, NGOmate answers without it after a few seconds and tells you so.
 
-To stop it, turn off that connector's knowledge search tool under **Connectors**.
+To stop it, turn off that connector's knowledge search tool under **Settings → Connectors**.
 
 ## What leaves your computer
 
@@ -95,6 +136,7 @@ By default, nothing: the model, your documents and your memory notes stay on you
 
 - **A model server** you point NGOmate at receives the conversation.
 - **A knowledge base** receives your question only.
+- **Your team's storage** gets the team notes and tasks you save there: a shared folder, a WebDAV server, an S3 bucket or a connector, whichever the team chose.
 - **Other connectors** receive what a tool call needs. Anything that would change something, such as sending, posting, saving or deleting, asks you first.
 - **Access tokens** for connectors are kept in your operating system's keychain, not in a file.
 
@@ -120,7 +162,7 @@ yarn build
 yarn desktop
 ```
 
-The first run downloads the pinned [llama.cpp](https://github.com/ggml-org/llama.cpp) server. Then choose a model under **Model**.
+The first run downloads the pinned [llama.cpp](https://github.com/ggml-org/llama.cpp) server. Then choose a model under **Settings → Model**.
 
 ## Project structure
 
@@ -136,7 +178,8 @@ The first run downloads the pinned [llama.cpp](https://github.com/ggml-org/llama
 ## Development
 
 ```sh
-yarn storybook    # every screen with made-up data, at http://localhost:6006
+yarn preview      # the whole app in your browser on made-up data, at http://localhost:1430
+yarn storybook    # every screen on its own, with made-up data, at http://localhost:6009
 yarn lint
 yarn typecheck
 yarn test

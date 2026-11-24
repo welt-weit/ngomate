@@ -3,8 +3,12 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import {
 	type MemoryStore,
 	type TaskFile,
+	TeamConflict,
+	type TeamStore,
 	connectMcpToolSource,
 	createOpenAiCompatibleClient,
+	parseTeamFile,
+	serializeTeamFile,
 } from '@ngomate/core'
 import {
 	type Conversation,
@@ -13,6 +17,7 @@ import {
 	type NgomateHost,
 	type PickedDocument,
 	type Settings,
+	type TeamHost,
 } from '@ngomate/ui'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
@@ -36,6 +41,58 @@ const memory: MemoryStore = {
 	read: (name) => call<string | null>('store_read', { area: 'memory', name }),
 	write: (name, text) => call('store_write', { area: 'memory', name, text }),
 	remove: (name) => call('store_remove', { area: 'memory', name }),
+}
+
+type TeamEntry = { name: string; version: string; updatedAt: number | null; bytes: number }
+type TeamRead = { text: string; version: string }
+type Written = { version: string | null; conflict: boolean }
+
+const teamStore: TeamStore = {
+	async list(area) {
+		const entries = await call<TeamEntry[]>('team_list', { area })
+		return entries.map((entry) => ({ ...entry, updatedAt: toIso(entry.updatedAt) }))
+	},
+	read: (area, name) => call<TeamRead | null>('team_read', { area, name }),
+	async write(area, name, text, expected) {
+		const written = await call<Written>('team_write', { area, name, text, expected })
+		if (written.conflict) throw new TeamConflict(area, name)
+		return { version: written.version }
+	},
+	async remove(area, name, expected) {
+		const written = await call<Written>('team_remove', { area, name, expected })
+		if (written.conflict) throw new TeamConflict(area, name)
+	},
+	async readTeamFile() {
+		const read = await call<TeamRead | null>('team_file_read')
+		return read ? parseTeamFile(read.text) : null
+	},
+}
+
+/** A team whose notes and tasks sit in a folder the team's own sync app shares. */
+const team: TeamHost = {
+	teams: () => call('teams'),
+	switchTo: (id) => call('team_switch', { id }),
+	label: (name) => call('team_label', { name }),
+	location: () => call('team_location'),
+	chooseFolder: () => call<string | null>('team_folder_choose'),
+	use: (location, secret) => call('team_use', { location, secret: secret ?? null }),
+	forget: () => call('team_forget'),
+	nextcloudLogin: {
+		start: (server) => call('nextcloud_login_start', { server }),
+		wait: (pollUrl, token) => call('nextcloud_login_wait', { pollUrl, token }),
+	},
+	store: teamStore,
+	async readTeamFile() {
+		const read = await call<TeamRead | null>('team_file_read')
+		return read ? { team: parseTeamFile(read.text), version: read.version } : null
+	},
+	async writeTeamFile(file, expected) {
+		const written = await call<Written>('team_file_write', {
+			text: serializeTeamFile(file),
+			expected,
+		})
+		if (written.conflict) throw new TeamConflict('notes', 'the team settings')
+	},
 }
 
 const models: ModelHost = {
@@ -83,6 +140,7 @@ export function createTauriHost(options: { appName: string; tasks: TaskFile[] })
 		...options,
 		memory,
 		models,
+		team,
 		async loadSettings() {
 			const stored = await call<string | null>('store_read', { area: 'settings', name: 'settings' })
 			return stored

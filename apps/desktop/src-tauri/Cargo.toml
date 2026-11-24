@@ -15,14 +15,20 @@ tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 tauri = { version = "2.10", features = [] }
+tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2.3"
 tauri-plugin-updater = "2.10"
 # Tauri's generated code reads the plugin settings in tauri.conf.json with it.
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-ngomate = { path = "../../../packages/tauri" }
+
+# A second launch from an invite link hands the link to the open window instead of opening another.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 # Small over fast: the app waits on the model, not on this code. Unwinding stays on, because reading a
 # broken PDF relies on catching a panic.

@@ -21,6 +21,21 @@ const COMMANDS: &[&str] = &[
     "addon_start",
     "addon_send",
     "addon_stop",
+    "teams",
+    "team_location",
+    "team_switch",
+    "team_label",
+    "team_folder_choose",
+    "team_use",
+    "team_forget",
+    "nextcloud_login_start",
+    "nextcloud_login_wait",
+    "team_list",
+    "team_read",
+    "team_write",
+    "team_remove",
+    "team_file_read",
+    "team_file_write",
 ];
 
 fn main() {

@@ -41,10 +41,10 @@ export function combineToolSources(
 			return all
 		},
 
-		async callTool(name, args): Promise<ToolResult> {
+		async callTool(name, args, context): Promise<ToolResult> {
 			const target = tools.get(name)
 			if (!target) return { text: `${name} is not available.`, isError: true }
-			return target.source.callTool(target.name, args)
+			return target.source.callTool(target.name, args, ...(context ? [context] : []))
 		},
 
 		async listPrompts() {
@@ -100,9 +100,9 @@ export function filterToolSource(
 			for (const tool of tools) visible.add(tool.name)
 			return tools
 		},
-		async callTool(name, args) {
+		async callTool(name, args, context) {
 			if (!visible.has(name)) return { text: `${name} is not available.`, isError: true }
-			return source.callTool(name, args)
+			return source.callTool(name, args, ...(context ? [context] : []))
 		},
 		listPrompts: source.listPrompts?.bind(source),
 		getPrompt: source.getPrompt?.bind(source),

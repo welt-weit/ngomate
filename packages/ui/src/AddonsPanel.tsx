@@ -1,4 +1,9 @@
-import { type ToolDefinition, isDestructiveTool, isKnowledgeTool } from '@ngomate/core'
+import {
+	type RecommendedConnector,
+	type ToolDefinition,
+	isDestructiveTool,
+	isKnowledgeTool,
+} from '@ngomate/core'
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { makeId } from './format.js'
 import type { Addon, AddonConnection, NgomateHost, Settings } from './host.js'
@@ -328,7 +333,8 @@ function ConnectedAddon({ addon, host, settings, onChange }: PanelProps & { addo
 
 type Draft =
 	| { kind: 'suggested'; name: string; url: string; note?: string; tokenHelp: string }
-	| { kind: 'own' }
+	/** Prefilled when the person's team suggests it. */
+	| { kind: 'own'; name?: string; url?: string }
 
 function ConnectForm({
 	draft,
@@ -344,8 +350,8 @@ function ConnectForm({
 }) {
 	const { Button, Input, Select } = usePrimitives()
 	const [ownKind, setOwnKind] = useState<'http' | 'command'>('http')
-	const [name, setName] = useState('')
-	const [url, setUrl] = useState('')
+	const [name, setName] = useState(draft.kind === 'own' ? (draft.name ?? '') : '')
+	const [url, setUrl] = useState(draft.kind === 'own' ? (draft.url ?? '') : '')
 	const [command, setCommand] = useState('')
 	const [token, setToken] = useState('')
 	const [connecting, setConnecting] = useState(false)
@@ -459,16 +465,27 @@ function ConnectForm({
 	)
 }
 
-export function AddonsPanel({ host, settings, onChange }: PanelProps) {
+export function AddonsPanel({
+	host,
+	settings,
+	onChange,
+	teamSuggests = [],
+}: PanelProps & {
+	/** Connectors the person's team suggests. Each still needs this person's own sign-in. */
+	teamSuggests?: RecommendedConnector[]
+}) {
 	const { Button, Dialog } = usePrimitives()
 	const [draft, setDraft] = useState<Draft | null>(null)
 	const [busy, setBusy] = useState(false)
-	const available = SUGGESTED.filter(
-		(item) =>
-			!settings.addons.some(
-				(addon) => addon.connection.kind === 'http' && addon.connection.url === item.url,
-			),
+	const connected = (url: string) =>
+		settings.addons.some(
+			(addon) => addon.connection.kind === 'http' && addon.connection.url === url,
+		)
+	const available = SUGGESTED.filter((item) => !connected(item.url))
+	const fromTeam = teamSuggests.filter(
+		(item) => !connected(item.url) && !SUGGESTED.some((known) => known.url === item.url),
 	)
+	const teamUrls = new Set(teamSuggests.map((item) => item.url))
 
 	return (
 		<section className="ngm-panel">
@@ -493,12 +510,28 @@ export function AddonsPanel({ host, settings, onChange }: PanelProps) {
 					<div className="ngm-card ngm-addon-card" key={item.name}>
 						<strong>{item.name}</strong>
 						<p className="ngm-muted">{item.about}</p>
+						{teamUrls.has(item.url) && <p className="ngm-muted">Your team suggests this.</p>}
 						{item.note && <p className="ngm-muted">{item.note}</p>}
 						<div className="ngm-addon-card-action">
 							<Button
 								variant="primary"
 								aria-label={`Connect ${item.name}`}
 								onClick={() => setDraft({ kind: 'suggested', ...item })}
+							>
+								Connect
+							</Button>
+						</div>
+					</div>
+				))}
+				{fromTeam.map((item) => (
+					<div className="ngm-card ngm-addon-card" key={item.url}>
+						<strong>{item.name}</strong>
+						<p className="ngm-muted">Your team suggests this. {item.url}</p>
+						<div className="ngm-addon-card-action">
+							<Button
+								variant="primary"
+								aria-label={`Connect ${item.name}`}
+								onClick={() => setDraft({ kind: 'own', name: item.name, url: item.url })}
 							>
 								Connect
 							</Button>

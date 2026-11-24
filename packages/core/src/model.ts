@@ -15,8 +15,20 @@ export type ToolDefinition = {
 	description: string
 	inputSchema: Record<string, unknown>
 	/** What the server says about the tool. A hint, never proof: anything unmarked counts as a write. */
-	annotations?: { readOnly?: boolean; destructive?: boolean }
+	annotations?: {
+		readOnly?: boolean
+		destructive?: boolean
+		/**
+		 * For a write: options the person picks between when confirming, such as where a note is saved.
+		 * The pick reaches the tool apart from the arguments, so the model can never make it. Only the
+		 * app's own tools set this; a connector's annotations are never copied into it.
+		 */
+		choices?: WriteChoice[]
+	}
 }
+
+/** One option offered with a write. The first is the default. */
+export type WriteChoice = { id: string; label: string }
 
 /**
  * Where the time of one model call went. The token figures come from llama-server's own report; other

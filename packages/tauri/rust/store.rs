@@ -47,7 +47,7 @@ pub struct Entry {
 
 /// A name is one path segment. Beyond that it stays permissive, because people can drop their own
 /// Markdown files into the memory folder and those have to stay readable.
-fn check_name(name: &str) -> Result<()> {
+pub(crate) fn check_name(name: &str) -> Result<()> {
     let valid = !name.is_empty()
         && name.len() <= 200
         && !name.starts_with('.')

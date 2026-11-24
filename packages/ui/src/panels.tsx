@@ -1,4 +1,11 @@
-import type { MemoryNote } from '@ngomate/core'
+import {
+	type MemoryNote,
+	TeamConflict,
+	type TeamEntry,
+	type TeamNotes,
+	isConflictCopy,
+	memoryNoteName,
+} from '@ngomate/core'
 import { useCallback, useEffect, useState } from 'react'
 import { formatBytes, recommendedModelId } from './format.js'
 import type { DownloadProgress, ModelInfo, NgomateHost, Settings } from './host.js'
@@ -249,10 +256,167 @@ function ServerForm({
 	)
 }
 
-export function MemoryPanel({ host }: { host: NgomateHost }) {
+function TeamNotesGroup({
+	notes,
+	onMoved,
+	moveToMe,
+}: {
+	notes: TeamNotes
+	onMoved: number
+	moveToMe: (name: string, text: string) => Promise<void>
+}) {
+	const { Button, TextArea } = usePrimitives()
+	const [entries, setEntries] = useState<TeamEntry[]>([])
+	const [open, setOpen] = useState<{ name: string; text: string } | null>(null)
+	const [theirs, setTheirs] = useState<string | null>(null)
+	const [problem, setProblem] = useState<string | null>(null)
+
+	const refresh = useCallback(async () => {
+		try {
+			setEntries(await notes.list())
+		} catch (err) {
+			setProblem(err instanceof Error ? err.message : String(err))
+		}
+	}, [notes])
+	// biome-ignore lint/correctness/useExhaustiveDependencies: listed again after a note moved here
+	useEffect(() => {
+		refresh()
+	}, [refresh, onMoved])
+
+	const act = async (work: () => Promise<void>) => {
+		setProblem(null)
+		try {
+			await work()
+		} catch (err) {
+			if (err instanceof TeamConflict && open) {
+				// Shown beside the person's own text: they decide, nothing is overwritten unasked.
+				setTheirs((await notes.read(open.name)) ?? '')
+			} else {
+				setProblem(err instanceof Error ? err.message : String(err))
+			}
+		}
+		await refresh()
+	}
+
+	return (
+		<>
+			<h3>Team notes</h3>
+			<p className="ngm-muted">
+				Shared with everyone in your team. The assistant reads the ones that fit your question.
+			</p>
+			{entries.length === 0 && <p className="ngm-muted">No team notes yet.</p>}
+			{entries.map((entry) => (
+				<div className="ngm-row" key={entry.name}>
+					<Button
+						variant="quiet"
+						onClick={async () => {
+							setTheirs(null)
+							setOpen({ name: entry.name, text: (await notes.read(entry.name)) ?? '' })
+						}}
+					>
+						{entry.name}
+					</Button>
+					{isConflictCopy(
+						entry.name,
+						entries.map((other) => other.name),
+					) && (
+						<span className="ngm-error">
+							a copy your sync app made when two people changed a note at once: compare it, then
+							delete one
+						</span>
+					)}
+					<span className="ngm-grow" />
+					<Button
+						onClick={() =>
+							act(async () => {
+								await notes.remove(entry.name)
+								if (open?.name === entry.name) setOpen(null)
+							})
+						}
+					>
+						Delete
+					</Button>
+				</div>
+			))}
+			{open && (
+				<form
+					className="ngm-form"
+					onSubmit={(event) => {
+						event.preventDefault()
+						act(async () => {
+							await notes.save(open.name, open.text)
+							setTheirs(null)
+						})
+					}}
+				>
+					<label>
+						{open.name}
+						<TextArea
+							rows={12}
+							value={open.text}
+							onChange={(event) => setOpen({ ...open, text: event.target.value })}
+						/>
+					</label>
+					{theirs !== null && (
+						<div className="ngm-card">
+							<p className="ngm-error">
+								Someone in the team changed this note since you opened it. Their version:
+							</p>
+							<pre className="ngm-pre">{theirs}</pre>
+							<div className="ngm-row">
+								<Button
+									onClick={() => {
+										setOpen({ ...open, text: theirs })
+										setTheirs(null)
+									}}
+								>
+									Keep theirs
+								</Button>
+								<Button
+									onClick={() =>
+										// Read just now, so saving replaces exactly what was shown.
+										act(async () => {
+											await notes.save(open.name, open.text)
+											setTheirs(null)
+										})
+									}
+								>
+									Save mine over it
+								</Button>
+							</div>
+						</div>
+					)}
+					<div className="ngm-row">
+						<Button type="submit">Save</Button>
+						<Button
+							onClick={() =>
+								act(async () => {
+									await moveToMe(open.name, open.text)
+									await notes.remove(open.name)
+									setOpen(null)
+								})
+							}
+						>
+							Move to my notes
+						</Button>
+						<Button onClick={() => setOpen(null)}>Close</Button>
+					</div>
+				</form>
+			)}
+			{problem && <p className="ngm-error">{problem}</p>}
+		</>
+	)
+}
+
+export function MemoryPanel({
+	host,
+	teamNotes,
+}: { host: NgomateHost; teamNotes?: TeamNotes | null }) {
 	const { Button, TextArea } = usePrimitives()
 	const [notes, setNotes] = useState<MemoryNote[]>([])
 	const [open, setOpen] = useState<{ name: string; text: string } | null>(null)
+	const [moved, setMoved] = useState(0)
+	const [problem, setProblem] = useState<string | null>(null)
 
 	const refresh = useCallback(async () => setNotes(await host.memory.list()), [host])
 	useEffect(() => {
@@ -266,6 +430,7 @@ export function MemoryPanel({ host }: { host: NgomateHost }) {
 				Notes the assistant reads at the start of a conversation. They are plain Markdown files on
 				this computer, and it asks you before saving one.
 			</p>
+			{teamNotes && <h3>My notes</h3>}
 			{notes.length === 0 && <p className="ngm-muted">No notes yet.</p>}
 			{notes.map((note) => (
 				<div className="ngm-row" key={note.name}>
@@ -308,9 +473,49 @@ export function MemoryPanel({ host }: { host: NgomateHost }) {
 					</label>
 					<div className="ngm-row">
 						<Button type="submit">Save</Button>
+						{teamNotes && (
+							<Button
+								onClick={async () => {
+									setProblem(null)
+									try {
+										const name = memoryNoteName(open.name)
+										if (!name) throw new Error('This note needs a name that has letters or digits.')
+										await teamNotes.save(name, open.text)
+										await host.memory.remove(open.name)
+										setOpen(null)
+										setMoved((count) => count + 1)
+									} catch (err) {
+										setProblem(
+											err instanceof TeamConflict
+												? 'The team already has a note with this name. Rename yours first.'
+												: err instanceof Error
+													? err.message
+													: String(err),
+										)
+									}
+									await refresh()
+								}}
+							>
+								Move to the team
+							</Button>
+						)}
 						<Button onClick={() => setOpen(null)}>Close</Button>
 					</div>
 				</form>
+			)}
+			{problem && <p className="ngm-error">{problem}</p>}
+			{teamNotes && (
+				<TeamNotesGroup
+					notes={teamNotes}
+					onMoved={moved}
+					moveToMe={async (name, text) => {
+						if ((await host.memory.read(name)) !== null) {
+							throw new Error('You already have a note with this name. Rename one first.')
+						}
+						await host.memory.write(name, text)
+						await refresh()
+					}}
+				/>
 			)}
 		</section>
 	)
