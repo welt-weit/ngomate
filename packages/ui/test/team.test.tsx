@@ -12,7 +12,7 @@ import {
 	parseTeamFile,
 	serializeTeamFile,
 } from '@ngomate/core'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NgomateApp } from '../src/NgomateApp.js'
@@ -283,10 +283,13 @@ const typeAndSend = async (text: string) => {
 	await userEvent.click(screen.getByRole('button', { name: 'Send' }))
 }
 
-/** Settings, at the top left beside the team menu, then one of its sections. */
+/** A setup page from the sidebar; You, from the avatar. */
 const openSettings = async (section: string) => {
-	await userEvent.click(await screen.findByRole('button', { name: 'You and your team' }))
-	await userEvent.click(await screen.findByRole('button', { name: 'Settings…' }))
+	if (section === 'You') {
+		await userEvent.click(await screen.findByRole('button', { name: 'You and your team' }))
+		await userEvent.click(await screen.findByRole('button', { name: /your name$/ }))
+		return
+	}
 	await userEvent.click(await screen.findByRole('button', { name: section }))
 }
 const openTeams = () => openSettings('Teams')
@@ -503,6 +506,7 @@ describe('team', () => {
 		folder.join()
 		const { host, saved } = makeHost([], folder.team)
 		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Tasks' }))
 		await userEvent.click(await screen.findByRole('button', { name: /Weekly update/ }))
 		expect(await screen.findByText(/This task comes from your team/)).toBeTruthy()
 		expect(screen.getByText(/Write a short update\./)).toBeTruthy()
@@ -756,6 +760,8 @@ describe('the menu bar', () => {
 		expect(parseMenuCommand('new-beside')).toEqual({ type: 'new-conversation', beside: true })
 		expect(parseMenuCommand('show:team')).toEqual({ type: 'show', page: 'team' })
 		expect(parseMenuCommand('team:abc')).toEqual({ type: 'switch-team', id: 'abc' })
+		expect(parseMenuCommand('toggle-work')).toEqual({ type: 'toggle-work' })
+		expect(parseMenuCommand('find')).toEqual({ type: 'find' })
 		for (const id of ['show:secrets', 'team:', 'delete-everything', '']) {
 			expect(parseMenuCommand(id), id).toBeNull()
 		}
@@ -845,22 +851,24 @@ describe('the head of the sidebar', () => {
 		expect(screen.queryByRole('combobox')).toBeNull()
 	})
 
-	it('keeps Memory at the bottom and everything set up once behind Settings', async () => {
+	it('lists everything set up once in the sidebar, and You behind the avatar', async () => {
 		const { host, saved } = makeHost([], sharedFolder().team, {}, undefined)
 		render(<NgomateApp host={{ ...host, checkForUpdate: async () => null }} />)
-		await userEvent.click(await screen.findByRole('button', { name: 'Memory' }))
-		expect(await screen.findByRole('heading', { name: 'Memory', level: 2 })).toBeTruthy()
+		const setUp = await screen.findByRole('navigation', { name: 'Set up' })
+		expect([...setUp.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
+			'Model',
+			'Connectors',
+			'Notes',
+			'Teams',
+			'About',
+		])
+		await userEvent.click(screen.getByRole('button', { name: 'Notes' }))
+		expect(await screen.findByRole('heading', { name: 'Notes', level: 2 })).toBeTruthy()
 
 		await openSettings('You')
 		await userEvent.type(screen.getByLabelText('Your name, as your teams see it'), 'Amina')
 		await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 		await waitFor(() => expect(saved.at(-1)?.yourName).toBe('Amina'))
-		expect(
-			screen
-				.getAllByRole('button')
-				.filter((button) => button.closest('nav'))
-				.map((button) => button.textContent),
-		).toEqual(['You', 'Model', 'Connectors', 'Teams', 'About'])
 
 		await userEvent.click(screen.getByRole('button', { name: 'About' }))
 		await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
@@ -918,6 +926,15 @@ describe('the avatar', () => {
 	})
 })
 
+const TASK = {
+	id: 'draft',
+	title: 'Draft a section',
+	description: 'Drafts one answer.',
+	ask: 'Which question?',
+	tools: 'none' as const,
+	instructions: 'Use only what is given.',
+}
+
 describe('the sidebar', () => {
 	it('folds to a strip of icons and back, and remembers it', async () => {
 		const { host, saved } = makeHost([], sharedFolder().team)
@@ -931,16 +948,68 @@ describe('the sidebar', () => {
 		await waitFor(() => expect(saved.at(-1)?.sidebarCollapsed).toBe(false))
 	})
 
-	it('folds a section away and remembers which', async () => {
+	it('pins a chat from the list on the right, and keeps it at the top of the sidebar', async () => {
+		const { host, saved } = makeHost([say('Hello.')], sharedFolder().team)
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Board letter')
+		await screen.findByText('Hello.')
+		const work = screen.getByRole('complementary', { name: 'Your work' })
+		await userEvent.click(await within(work).findByRole('button', { name: /^Pin / }))
+		await waitFor(() => expect(saved.at(-1)?.pinned).toHaveLength(1))
+		const sidebar = screen.getByRole('complementary', { name: 'Sidebar' })
+		expect(within(sidebar).queryByText('Pin a chat to keep it here.')).toBeNull()
+		await userEvent.click(within(sidebar).getByRole('button', { name: /^Unpin / }))
+		await waitFor(() => expect(saved.at(-1)?.pinned).toEqual([]))
+	})
+
+	it('opens a setup page as a tab, once, and keeps it', async () => {
 		const { host, saved } = makeHost([], sharedFolder().team)
 		render(<NgomateApp host={host} />)
-		const tasks = await screen.findByRole('button', { name: 'Ready-made tasks' })
-		expect(tasks.getAttribute('aria-expanded')).toBe('true')
-		await userEvent.click(tasks)
-		await waitFor(() => expect(saved.at(-1)?.foldedSections).toEqual(['tasks']))
-		expect(
-			screen.getByRole('button', { name: 'Ready-made tasks' }).getAttribute('aria-expanded'),
-		).toBe('false')
+		await userEvent.click(await screen.findByRole('button', { name: 'Model' }))
+		// An empty new conversation makes way, as it does for a conversation opened from the list.
+		expect(await screen.findByRole('tab', { name: 'Model' })).toBeTruthy()
+		expect(screen.queryByRole('tab', { name: 'New conversation' })).toBeNull()
+		await userEvent.click(screen.getByRole('button', { name: 'Teams' }))
+		expect(await screen.findByRole('tab', { name: 'Teams' })).toBeTruthy()
+		await userEvent.click(screen.getByRole('button', { name: 'Model' }))
+		expect(screen.getAllByRole('tab', { name: 'Model' })).toHaveLength(1)
+		expect(screen.getByRole('tab', { name: 'Model' }).getAttribute('aria-selected')).toBe('true')
+		await waitFor(() =>
+			expect(saved.at(-1)?.layout?.panes.flatMap((pane) => pane.tabs)).toContain('page:model'),
+		)
+	})
+
+	it('finds a chat by what it says and a note by its text', async () => {
+		const { host, notes } = makeHost([say('The pump costs 2,350 euros.')], sharedFolder().team)
+		notes.set('funders', 'The Linden Foundation prefers short reports.')
+		render(<NgomateApp host={host} />)
+		await typeAndSend('Hello there')
+		await screen.findByText('The pump costs 2,350 euros.')
+		const work = screen.getByRole('complementary', { name: 'Your work' })
+		const find = within(work).getByRole('searchbox', { name: 'Find chats, tasks and notes' })
+		await userEvent.type(find, 'euros')
+		expect(await within(work).findByRole('heading', { name: 'Chats' })).toBeTruthy()
+		await userEvent.clear(find)
+		await userEvent.type(find, 'linden')
+		await userEvent.click(await within(work).findByRole('button', { name: 'funders' }))
+		expect(await screen.findByRole('tab', { name: 'Notes' })).toBeTruthy()
+	})
+
+	it('finds chats and tasks from one field, and lists tasks apart', async () => {
+		const { host } = makeHost([say('Hello.')], sharedFolder().team)
+		render(<NgomateApp host={{ ...host, tasks: [TASK] }} />)
+		await typeAndSend('Pump repair quote')
+		await screen.findByText('Hello.')
+		await userEvent.keyboard('{Meta>}k{/Meta}')
+		const find = screen.getByRole('searchbox', { name: 'Find chats, tasks and notes' })
+		expect(document.activeElement).toBe(find)
+		await userEvent.type(find, 'pump')
+		const work = screen.getByRole('complementary', { name: 'Your work' })
+		expect(within(work).getByRole('heading', { name: 'Chats' })).toBeTruthy()
+		expect(within(work).queryByRole('heading', { name: 'Tasks' })).toBeNull()
+		await userEvent.clear(find)
+		await userEvent.click(within(work).getByRole('button', { name: 'Tasks' }))
+		expect(within(work).getByRole('button', { name: TASK.title })).toBeTruthy()
 	})
 
 	it('keeps an update notice, unchecked again, while it folds', async () => {

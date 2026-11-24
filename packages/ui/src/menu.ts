@@ -8,6 +8,8 @@ const PLAIN = [
 	'copy-invite',
 	'check-updates',
 	'toggle-sidebar',
+	'toggle-work',
+	'find',
 ] as const
 
 /**

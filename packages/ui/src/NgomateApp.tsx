@@ -1,6 +1,7 @@
 import type { PromptDefinition, TaskFile } from '@ngomate/core'
 import {
 	type CSSProperties,
+	Fragment,
 	type ReactNode,
 	useCallback,
 	useEffect,
@@ -12,6 +13,7 @@ import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatStart } from './Chat.js'
 import { ProfileMenu } from './ProfileMenu.js'
 import { SettingsPage, type SettingsSection } from './Settings.js'
+import { type FoundText, WorkPanel, type WorkTask, matches } from './WorkPanel.js'
 import { TabBar, startConversationDrag } from './TabBar.js'
 import { TeamPanel } from './TeamPanel.js'
 import { UpdateNotice } from './UpdateNotice.js'
@@ -46,7 +48,24 @@ import { useIdleUnload } from './useIdleUnload.js'
 import { type TeamTask, useTeam } from './useTeam.js'
 
 /** The conversations, the notes, or the settings. */
-type View = 'chat' | 'memory' | 'settings'
+/** A page of what is set up once, open in a tab like a conversation. */
+type Page = SettingsSection | 'memory'
+const PAGE_PREFIX = 'page:'
+/** Below this, both panels open leave the conversation too little room. */
+const NARROW_WINDOW = '(max-width: 1000px)'
+const PAGE_TITLES: Record<Page, string> = {
+	you: 'You',
+	model: 'Model',
+	addons: 'Connectors',
+	memory: 'Notes',
+	team: 'Teams',
+	about: 'About',
+}
+const pageTab = (page: Page) => `${PAGE_PREFIX}${page}`
+function pageOf(id: string | undefined): Page | null {
+	const page = id?.startsWith(PAGE_PREFIX) ? id.slice(PAGE_PREFIX.length) : null
+	return page && page in PAGE_TITLES ? (page as Page) : null
+}
 
 const newestFirst = <T extends { updatedAt: string }>(listed: T[]) =>
 	[...listed].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -135,12 +154,6 @@ export function NgomateApp({ theme, primitives, ...props }: NgomateAppProps) {
 function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | 'embedded'>) {
 	const { Button, Dialog } = usePrimitives()
 	const [settings, setSettings] = useState<Settings | null>(null)
-	const [view, setView] = useState<View>('chat')
-	const [section, setSection] = useState<SettingsSection>('model')
-	const openSettings = (at: SettingsSection) => {
-		setSection(at)
-		setView('settings')
-	}
 	const [layout, setLayout] = useState<Layout>(() => singleLayout(makeId('chat')))
 	const [conversations, setConversations] = useState<
 		{ id: string; title: string; updatedAt: string }[]
@@ -153,12 +166,12 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	const [checkTask, setCheckTask] = useState<TeamTask | null>(null)
 	// An invite link opened from outside, waiting for the person on the Team page.
 	const [incomingInvite, setIncomingInvite] = useState<string | null>(null)
+	const openPageRef = useRef<(page: Page) => void>(() => {})
 	useEffect(
 		() =>
 			host.team?.onInvite?.((link) => {
 				setIncomingInvite(link)
-				setSection('team')
-				setView('settings')
+				openPageRef.current('team')
 			}),
 		[host],
 	)
@@ -176,7 +189,10 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			if (!current) return
 			setSettings(loaded)
 			setConversations(newestFirst(listed))
-			const kept = restoreLayout(loaded.layout, (id) => listed.some((saved) => saved.id === id))
+			const kept = restoreLayout(
+				loaded.layout,
+				(id) => pageOf(id) !== null || listed.some((saved) => saved.id === id),
+			)
 			if (kept) setLayout(kept)
 			setRestored(true)
 		})
@@ -276,6 +292,48 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 
 	const team = useTeam(host, settings?.addons)
 	const teamNotes = team.notes
+
+	// What each conversation and note says, read for Find the first time it searches and again only
+	// once it changed. Kept in this window only.
+	const readForFind = useRef(new Map<string, { version: string; text: string }>())
+	const findIn = useCallback(
+		async (query: string): Promise<FoundText> => {
+			const cache = readForFind.current
+			const textOf = async (key: string, version: string, read: () => Promise<string>) => {
+				const kept = cache.get(key)
+				if (kept?.version === version) return kept.text
+				const text = await read().catch(() => '')
+				cache.set(key, { version, text })
+				return text
+			}
+			const chats: string[] = []
+			for (const conversation of conversations) {
+				const text = await textOf(`chat:${conversation.id}`, conversation.updatedAt, async () => {
+					const full = await host.readConversation(conversation.id)
+					return (full?.messages ?? [])
+						.filter((message) => message.role === 'user' || message.role === 'assistant')
+						.map((message) => message.content ?? '')
+						.join('\n')
+				})
+				if (matches(query, conversation.title, text)) chats.push(conversation.id)
+			}
+			const notes: FoundText['notes'] = []
+			for (const note of await host.memory.list().catch(() => [])) {
+				const text = await textOf(
+					`note:${note.name}`,
+					`${note.updatedAt}/${note.chars}`,
+					async () => (await host.memory.read(note.name)) ?? '',
+				)
+				if (matches(query, note.name, text)) notes.push({ name: note.name, team: false })
+			}
+			// Team notes through the read a conversation uses: kept copies, only changed notes fetched.
+			for (const note of (await teamNotes?.readAll().catch(() => [])) ?? []) {
+				if (matches(query, note.name, note.text)) notes.push({ name: note.name, team: true })
+			}
+			return { chats, notes }
+		},
+		[host, conversations, teamNotes],
+	)
 	// Two teams can each have a task file of the same name.
 	const seenKey = (item: TeamTask) => `${team.activeId}/${item.task.id}`
 	const teamAddonId = team.location?.type === 'connector' ? team.location.addonId : undefined
@@ -305,19 +363,25 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	/** A tab that holds nothing yet makes way, rather than staying open beside what comes next. */
 	const showHere = (current: Layout, id: string) => {
 		const shown = activeId(current)
-		return shown && !saved(shown) ? replaceActive(current, id) : openTab(current, id)
+		const blank =
+			shown &&
+			!saved(shown) &&
+			!pageOf(shown) &&
+			!current.panes.some((pane) => pane.tabs.includes(id))
+		return blank ? replaceActive(current, id) : openTab(current, id)
 	}
+	/** A page opens once: asked again, its tab comes to the front wherever it is. */
+	const openPage = (page: Page) => setLayout((current) => showHere(current, pageTab(page)))
+	openPageRef.current = openPage
 
 	const startNew = (begin: ChatStart | null = null, beside = false) => {
 		const id = makeId('chat')
 		setLayout((current) => (beside ? openBeside(current, id) : showHere(current, id)))
 		setStart(begin ? { id, begin } : null)
-		setView('chat')
 	}
 
 	const show = (id: string, beside = false) => {
 		setLayout((current) => (beside ? openBeside(current, id) : showHere(current, id)))
-		setView('chat')
 	}
 
 	const focusPane = (index: number) =>
@@ -331,12 +395,51 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		setLayout((current) => closeTab(current, id) ?? singleLayout(makeId('chat')))
 
 	const clearStart = useCallback(() => setStart(null), [])
-	const titleOf = (id: string) =>
-		conversations.find((conversation) => conversation.id === id)?.title ?? 'New conversation'
+	const titleOf = (id: string) => {
+		const page = pageOf(id)
+		if (page) return PAGE_TITLES[page]
+		return conversations.find((conversation) => conversation.id === id)?.title ?? 'New conversation'
+	}
 	const shown = activeId(layout)
 
 	// Menu commands that a page or the conversation in front carries out: each new request counts up.
 	const [requests, setRequests] = useState({ attach: 0, update: 0 })
+	// On a narrow window the work panel folds by itself; opened there, it stays open until the width
+	// changes. What the person chose for a wide window is kept as it was.
+	const [narrow, setNarrow] = useState(
+		() => typeof window.matchMedia === 'function' && window.matchMedia(NARROW_WINDOW).matches,
+	)
+	const [openedNarrow, setOpenedNarrow] = useState(false)
+	useEffect(() => {
+		if (typeof window.matchMedia !== 'function') return
+		const query = window.matchMedia(NARROW_WINDOW)
+		const onChange = () => {
+			setNarrow(query.matches)
+			setOpenedNarrow(false)
+		}
+		query.addEventListener('change', onChange)
+		return () => query.removeEventListener('change', onChange)
+	}, [])
+	const workFolded = settings?.workCollapsed === true || (narrow && !openedNarrow)
+
+	// ⌘K or Ctrl+K from anywhere: the panel opens if folded and its field takes the typing.
+	const [findRequest, setFindRequest] = useState(0)
+	const requestFind = useCallback(() => {
+		const current = settingsRef.current
+		if (current?.workCollapsed) updateSettings({ ...current, workCollapsed: false })
+		setOpenedNarrow(true)
+		setFindRequest((count) => count + 1)
+	}, [updateSettings])
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+				event.preventDefault()
+				requestFind()
+			}
+		}
+		window.addEventListener('keydown', onKey)
+		return () => window.removeEventListener('keydown', onKey)
+	}, [requestFind])
 	// For the Team page, which may only open because of it: carried out once there, then cleared.
 	const [teamAction, setTeamAction] = useState<'add' | 'copy-invite' | null>(null)
 	const ask = (what: keyof typeof requests) =>
@@ -353,6 +456,12 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		() => patchSettings((current) => ({ sidebarCollapsed: !current.sidebarCollapsed })),
 		[patchSettings],
 	)
+	const toggleWork = () => {
+		if (!narrow) return patchSettings((current) => ({ workCollapsed: !current.workCollapsed }))
+		if (!workFolded) return setOpenedNarrow(false)
+		setOpenedNarrow(true)
+		if (settingsRef.current?.workCollapsed) patchSettings(() => ({ workCollapsed: false }))
+	}
 	const onMenu = useRef<(command: MenuCommand) => void>(() => {})
 	onMenu.current = (command) => {
 		switch (command.type) {
@@ -361,23 +470,30 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			case 'close-tab':
 				return shown ? close(shown) : undefined
 			case 'attach':
-				setView('chat')
 				return ask('attach')
 			case 'show':
-				if (command.page === 'chat' || command.page === 'memory') return setView(command.page)
-				return openSettings(command.page)
+				if (command.page === 'chat') {
+					// The newest conversation open, or a new one.
+					const chat = [...opened.current].reverse().find((id) => !pageOf(id))
+					return chat ? show(chat) : startNew()
+				}
+				return openPage(command.page)
 			case 'switch-team':
 				return void team.switchTo(command.id)
 			case 'add-team':
-				openSettings('team')
+				openPage('team')
 				return setTeamAction('add')
 			case 'copy-invite':
-				openSettings('team')
+				openPage('team')
 				return setTeamAction('copy-invite')
 			case 'check-updates':
 				return ask('update')
 			case 'toggle-sidebar':
 				return toggleSidebar()
+			case 'toggle-work':
+				return toggleWork()
+			case 'find':
+				return requestFind()
 		}
 	}
 	useEffect(() => host.menu?.onCommand((command) => onMenu.current(command)), [host])
@@ -392,8 +508,9 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			activeId: team.activeId,
 			canInvite,
 			sidebarCollapsed,
+			workCollapsed: workFolded,
 		})
-	}, [host, menuTeams, team.activeId, canInvite, sidebarCollapsed])
+	}, [host, menuTeams, team.activeId, canInvite, sidebarCollapsed, workFolded])
 	// Kept in first-opened order, so a tab moving between panes never moves its chat on the page.
 	const opened = useRef<string[]>([])
 	const openIds = layout.panes.flatMap((pane) => pane.tabs)
@@ -416,9 +533,9 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			host={host}
 			settings={settings}
 			team={team}
-			onSettings={(at) => openSettings(at ?? section)}
+			onSettings={openPage}
 			onAddTeam={() => {
-				openSettings('team')
+				openPage('team')
 				setTeamAction('add')
 			}}
 			onCheckUpdates={() => ask('update')}
@@ -440,31 +557,151 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		</Button>
 	)
 
-	const folded = new Set(settings.foldedSections ?? [])
-	const toggleFold = (key: string) =>
+	const pinned = (settings.pinned ?? []).filter((id) => saved(id))
+	const togglePin = (id: string) =>
 		patchSettings((current) => {
-			const now = current.foldedSections ?? []
-			return {
-				foldedSections: now.includes(key) ? now.filter((name) => name !== key) : [...now, key],
-			}
+			const now = current.pinned ?? []
+			return { pinned: now.includes(id) ? now.filter((each) => each !== id) : [...now, id] }
 		})
-	/** A sidebar section whose title folds it away; which are folded is kept between launches. */
-	const foldable = (key: string, title: string, children: ReactNode) => (
-		<section className="ngm-side-section" key={key}>
-			<h2 className="ngm-side-title">
-				<Button
-					variant="quiet"
-					className="ngm-side-toggle"
-					aria-expanded={!folded.has(key)}
-					onClick={() => toggleFold(key)}
-				>
-					<span className="ngm-side-toggle-text">{title}</span>
-					<Icon path={ICONS.chevron} size={12} />
-				</Button>
-			</h2>
-			{!folded.has(key) && children}
-		</section>
-	)
+	const removeConversation = async (id: string) => {
+		await host.removeConversation(id)
+		close(id)
+		if (settings.pinned?.includes(id)) togglePin(id)
+		await refreshConversations()
+	}
+
+	const runTeamTask = (item: TeamTask) => {
+		if (item.version && settings.teamTasksSeen?.[seenKey(item)] === item.version) {
+			startNew({ task: item.task })
+		} else {
+			setCheckTask(item)
+		}
+	}
+	const runPrompt = (prompt: ConnectorPrompt) => {
+		if (prompt.arguments.length) setOpenPrompt(prompt)
+		else
+			prompt
+				.run({})
+				.then((text) => startNew({ prompt: { definition: prompt, text } }))
+				.catch(() => setOpenPrompt(prompt))
+	}
+	const taskGroups: { title: string; tasks: WorkTask[] }[] = [
+		{
+			title: 'Ready-made',
+			tasks: host.tasks.map((task: TaskFile) => ({
+				key: task.id,
+				label: task.title,
+				text: task.title,
+				title: task.description,
+				run: () => startNew({ task }),
+			})),
+		},
+		{
+			title: 'From your team',
+			tasks: team.tasks.map((item) => ({
+				key: item.task.id,
+				label: item.task.title,
+				text: item.task.title,
+				title: item.task.description,
+				run: () => runTeamTask(item),
+			})),
+		},
+		...[...new Set(prompts.map((prompt) => prompt.source))].map((source) => ({
+			title: `From ${source}`,
+			tasks: prompts
+				.filter((prompt) => prompt.source === source)
+				.map((prompt) => ({
+					key: `${source}/${prompt.name}`,
+					label: promptLabel(prompt),
+					text: `${promptLabel(prompt)} ${source}`,
+					title: prompt.description,
+					run: () => runPrompt(prompt),
+				})),
+		})),
+	]
+
+	/** What is set up once: each opens in the middle, beside the work. */
+	const places = [
+		{
+			key: 'model',
+			label: 'Model',
+			icon: ICONS.model,
+			open: () => openPage('model'),
+			active: shown === pageTab('model'),
+		},
+		{
+			key: 'addons',
+			label: 'Connectors',
+			icon: ICONS.plug,
+			open: () => openPage('addons'),
+			active: shown === pageTab('addons'),
+		},
+		{
+			key: 'memory',
+			label: 'Notes',
+			icon: ICONS.memory,
+			open: () => openPage('memory'),
+			active: shown === pageTab('memory'),
+		},
+		...(host.team
+			? [
+					{
+						key: 'team',
+						label: 'Teams',
+						icon: ICONS.team,
+						open: () => openPage('team'),
+						active: shown === pageTab('team'),
+					},
+				]
+			: []),
+		{
+			key: 'about',
+			label: 'About',
+			icon: ICONS.info,
+			open: () => openPage('about'),
+			active: shown === pageTab('about'),
+		},
+	]
+
+	/** A page of what is set up once, in its tab. */
+	const pageContent = (page: Page) =>
+		page === 'memory' ? (
+			<div className="ngm-settings-content">
+				<MemoryPanel host={host} teamNotes={team.notes} />
+			</div>
+		) : (
+			<SettingsPage
+				host={host}
+				settings={settings}
+				onChange={updateSettings}
+				section={page}
+				onCheckUpdates={() => ask('update')}
+				sections={{
+					model: <ModelPanel host={host} settings={settings} onChange={updateSettings} />,
+					addons: (
+						<AddonsPanel
+							host={host}
+							settings={settings}
+							onChange={updateSettings}
+							teamSuggests={team.file?.connectors}
+						/>
+					),
+					team: host.team && (
+						<TeamPanel
+							host={{ ...host, team: host.team }}
+							settings={settings}
+							onChange={updateSettings}
+							team={team}
+							onOpenConnectors={() => openPage('addons')}
+							incomingInvite={incomingInvite}
+							onInviteSeen={() => setIncomingInvite(null)}
+							action={teamAction}
+							onActionDone={() => setTeamAction(null)}
+						/>
+					),
+				}}
+			/>
+		)
 
 	return (
 		<>
@@ -477,7 +714,11 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 					<>
 						{iconButton('Show the sidebar', ICONS.sidebar, toggleSidebar)}
 						{iconButton('New conversation', ICONS.plus, () => startNew())}
-						{iconButton('Memory', ICONS.memory, () => setView('memory'), view === 'memory')}
+						{places.map((place) => (
+							<Fragment key={place.key}>
+								{iconButton(place.label, place.icon, place.open, place.active)}
+							</Fragment>
+						))}
 						{profile}
 					</>
 				) : (
@@ -489,124 +730,53 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 									{host.appName}
 								</h1>
 							)}
-							{iconButton('Memory', ICONS.memory, () => setView('memory'), view === 'memory')}
+							{iconButton('New conversation', ICONS.plus, () => startNew())}
 							{profile}
 							{iconButton('Hide the sidebar', ICONS.sidebar, toggleSidebar)}
 						</div>
-						<Button variant="primary" onClick={() => startNew()}>
-							New conversation
-						</Button>
-
-						{/* Tasks and conversations scroll together; each section folds away. */}
 						<div className="ngm-side-scroll">
-							{foldable(
-								'tasks',
-								'Ready-made tasks',
-								<>
-									{host.tasks.map((task: TaskFile) => (
-										<Button
-											variant="nav"
-											key={task.id}
-											title={task.description}
-											onClick={() => startNew({ task })}
-										>
-											{task.title}
-										</Button>
-									))}
-									{team.tasks.map((item) => (
-										<Button
-											variant="nav"
-											key={item.task.id}
-											title={`${item.task.description} (from your team)`}
-											onClick={() => {
-												if (
-													item.version &&
-													settings.teamTasksSeen?.[seenKey(item)] === item.version
-												) {
-													startNew({ task: item.task })
-												} else {
-													setCheckTask(item)
-												}
-											}}
-										>
-											{item.task.title} <span className="ngm-muted">· team</span>
-										</Button>
-									))}
-								</>,
-							)}
-							{[...new Set(prompts.map((prompt) => prompt.source))].map((source) =>
-								foldable(
-									`connector:${source}`,
-									`From ${source}`,
-									prompts
-										.filter((prompt) => prompt.source === source)
-										.map((prompt) => (
-											<Button
-												variant="nav"
-												key={prompt.name}
-												title={prompt.description}
-												onClick={() => {
-													if (prompt.arguments.length) setOpenPrompt(prompt)
-													else
-														prompt
-															.run({})
-															.then((text) => startNew({ prompt: { definition: prompt, text } }))
-															.catch(() => setOpenPrompt(prompt))
-												}}
-											>
-												{promptLabel(prompt)}
-											</Button>
-										)),
-								),
-							)}
-							{foldable(
-								'conversations',
-								'Conversations',
-								<div className="ngm-side-list">
-									{conversations.map((conversation) => (
-										<div
-											className="ngm-side-item"
-											key={conversation.id}
-											draggable
-											title="Drag onto a tab bar to open it there"
-											onDragStart={(event) => startConversationDrag(event, conversation.id)}
-										>
-											<Button
-												variant="nav"
-												active={view === 'chat' && conversation.id === shown}
-												onClick={() => show(conversation.id)}
-											>
-												{conversation.title}
-											</Button>
-											<div className="ngm-side-actions">
-												<Button
-													variant="quiet"
-													className="ngm-icon-button"
-													aria-label={`Open ${conversation.title} side by side`}
-													title="Open side by side"
-													disabled={layout.panes.length >= MAX_PANES}
-													onClick={() => show(conversation.id, true)}
-												>
-													<Icon path={ICONS.split} size={14} />
+							<section className="ngm-side-section">
+								<h2 className="ngm-side-title">Pinned</h2>
+								{pinned.length ? (
+									<div className="ngm-side-list">
+										{pinned.map((id) => (
+											<div className="ngm-side-item" key={id}>
+												<Button variant="nav" active={id === shown} onClick={() => show(id)}>
+													{titleOf(id)}
 												</Button>
-												<Button
-													variant="quiet"
-													className="ngm-icon-button"
-													aria-label={`Delete ${conversation.title}`}
-													title="Delete"
-													onClick={async () => {
-														await host.removeConversation(conversation.id)
-														close(conversation.id)
-														await refreshConversations()
-													}}
-												>
-													<Icon path={ICONS.close} size={14} />
-												</Button>
+												<div className="ngm-side-actions">
+													<Button
+														variant="quiet"
+														className="ngm-icon-button"
+														aria-label={`Unpin ${titleOf(id)}`}
+														title="Unpin"
+														onClick={() => togglePin(id)}
+													>
+														<Icon path={ICONS.close} size={14} />
+													</Button>
+												</div>
 											</div>
-										</div>
-									))}
-								</div>,
-							)}
+										))}
+									</div>
+								) : (
+									<p className="ngm-side-note">Pin a chat to keep it here.</p>
+								)}
+							</section>
+							<nav className="ngm-side-section ngm-places" aria-label="Set up">
+								<h2 className="ngm-side-title">Set up</h2>
+								{places.map((place) => (
+									<Button
+										variant="nav"
+										key={place.key}
+										active={place.active}
+										aria-current={place.active ? 'page' : undefined}
+										onClick={place.open}
+									>
+										<Icon path={place.icon} size={14} />
+										{place.label}
+									</Button>
+								))}
+							</nav>
 						</div>
 					</>
 				)}
@@ -614,7 +784,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			</aside>
 
 			<main className="ngm-main">
-				{openPrompt && view === 'chat' && (
+				{openPrompt && (
 					<PromptForm
 						prompt={openPrompt}
 						onCancel={() => setOpenPrompt(null)}
@@ -630,7 +800,6 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				 */}
 				<div
 					className="ngm-panes"
-					hidden={view !== 'chat'}
 					style={{ gridTemplateColumns: `repeat(${layout.panes.length}, minmax(280px, 1fr))` }}
 				>
 					{layout.panes.map((pane, paneIndex) => (
@@ -679,52 +848,21 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 								onFocusCapture={() => focusPane(paneIndex)}
 								onMouseDownCapture={() => focusPane(paneIndex)}
 							>
-								<Chat
-									deps={deps}
-									conversationId={id}
-									start={start?.id === id ? start.begin : null}
-									attachRequest={id === shown ? requests.attach : 0}
-									onStarted={clearStart}
-								/>
+								{pageOf(id) ? (
+									pageContent(pageOf(id) as Page)
+								) : (
+									<Chat
+										deps={deps}
+										conversationId={id}
+										start={start?.id === id ? start.begin : null}
+										attachRequest={id === shown ? requests.attach : 0}
+										onStarted={clearStart}
+									/>
+								)}
 							</div>
 						)
 					})}
 				</div>
-				{view === 'memory' && <MemoryPanel host={host} teamNotes={team.notes} />}
-				{view === 'settings' && (
-					<SettingsPage
-						host={host}
-						settings={settings}
-						onChange={updateSettings}
-						section={section}
-						onSection={setSection}
-						onCheckUpdates={() => ask('update')}
-						sections={{
-							model: <ModelPanel host={host} settings={settings} onChange={updateSettings} />,
-							addons: (
-								<AddonsPanel
-									host={host}
-									settings={settings}
-									onChange={updateSettings}
-									teamSuggests={team.file?.connectors}
-								/>
-							),
-							team: host.team && (
-								<TeamPanel
-									host={{ ...host, team: host.team }}
-									settings={settings}
-									onChange={updateSettings}
-									team={team}
-									onOpenConnectors={() => setSection('addons')}
-									incomingInvite={incomingInvite}
-									onInviteSeen={() => setIncomingInvite(null)}
-									action={teamAction}
-									onActionDone={() => setTeamAction(null)}
-								/>
-							),
-						}}
-					/>
-				)}
 				{checkTask && (
 					<Dialog title={checkTask.task.title} onClose={() => setCheckTask(null)}>
 						<p>
@@ -758,6 +896,24 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 					</Dialog>
 				)}
 			</main>
+			<WorkPanel
+				conversations={conversations}
+				shownId={shown ?? null}
+				pinned={settings.pinned ?? []}
+				taskGroups={taskGroups}
+				group={settings.workGroup ?? 'chats'}
+				onGroup={(group) => patchSettings(() => ({ workGroup: group }))}
+				collapsed={workFolded}
+				onToggle={toggleWork}
+				canSplit={layout.panes.length < MAX_PANES}
+				onOpen={show}
+				onTogglePin={togglePin}
+				onDelete={removeConversation}
+				onFind={requestFind}
+				findIn={findIn}
+				onOpenNotes={() => openPage('memory')}
+				findRequest={findRequest}
+			/>
 		</>
 	)
 }

@@ -154,6 +154,7 @@ describe('chat', () => {
 	it('runs a ready-made task with a document, lists a figure it does not back, and reminds the person to check', async () => {
 		const { host, chat } = makeHost([say('A draft with 12 tanks.')])
 		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Tasks' }))
 		await userEvent.click(await screen.findByRole('button', { name: 'Draft a section' }))
 		await userEvent.click(await screen.findByRole('button', { name: 'Attach document' }))
 		await screen.findByText('notes.txt')
@@ -187,6 +188,7 @@ describe('chat', () => {
 			},
 		)
 		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Tasks' }))
 		await userEvent.click(await screen.findByRole('button', { name: 'Find funding' }))
 		await typeAndSend('A water NGO')
 		expect((await screen.findByRole('alert')).textContent).toContain('needs a connected tool')
@@ -488,6 +490,7 @@ describe('chat', () => {
 		const replies: ModelReply[] = []
 		const { host, chat, conversations } = makeHost(replies)
 		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Tasks' }))
 		await userEvent.click(await screen.findByRole('button', { name: 'Draft a section' }))
 		await typeAndSend('Question 2')
 		expect(await screen.findByText('No answer')).toBeTruthy()
@@ -919,8 +922,6 @@ describe('connectors', () => {
 		return { saved }
 	}
 	const toConnectors = async () => {
-		await userEvent.click(await screen.findByRole('button', { name: 'You and your team' }))
-		await userEvent.click(await screen.findByRole('button', { name: 'Settings…' }))
 		await userEvent.click(await screen.findByRole('button', { name: 'Connectors' }))
 	}
 
@@ -954,7 +955,7 @@ describe('connectors', () => {
 		await userEvent.type(screen.getByLabelText(/Paste your token/), 'bad')
 		await userEvent.click(screen.getByRole('button', { name: 'Connect' }))
 		expect((await screen.findByRole('alert')).textContent).toContain('token was not accepted')
-		expect(saved).toEqual([])
+		expect(saved.flatMap((each) => each.addons)).toEqual([])
 		expect(deleteSecret).toHaveBeenCalled()
 		expect(screen.getByLabelText(/Paste your token/)).toBeTruthy()
 	})
@@ -975,7 +976,8 @@ describe('connectors', () => {
 		await screen.findByRole('dialog', { name: 'Connect Apify' })
 		await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 		expect(screen.queryByRole('dialog')).toBeNull()
-		expect(saved).toEqual([])
+		// Opening the page is saved as a tab; no connector is.
+		expect(saved.flatMap((each) => each.addons)).toEqual([])
 
 		await userEvent.click(screen.getByRole('button', { name: 'Connect Apify' }))
 		await userEvent.type(screen.getByLabelText(/Paste your token/), 'good')
@@ -1075,8 +1077,7 @@ describe('moving around while an answer is written', () => {
 		)
 		render(<NgomateApp host={host} />)
 		await typeAndSend('Write something long')
-		await userEvent.click(await screen.findByRole('button', { name: 'You and your team' }))
-		await userEvent.click(await screen.findByRole('button', { name: 'Settings…' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Model' }))
 		const request = chat.mock.calls[0]?.[0] as ChatRequest
 		expect(request.signal?.aborted).toBe(false)
 		release(say('Finished anyway.'))

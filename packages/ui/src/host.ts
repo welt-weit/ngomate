@@ -108,8 +108,12 @@ export type Settings = {
 	yourName?: string
 	/** The sidebar is folded to a strip of icons. */
 	sidebarCollapsed?: boolean
-	/** Sidebar sections folded away, by name: `tasks`, `conversations`, `connector:<name>`. */
-	foldedSections?: string[]
+	/** Conversations kept at the top of the sidebar, by id, in the order pinned. */
+	pinned?: string[]
+	/** The panel of chats, tasks and jobs on the right is folded to a strip. */
+	workCollapsed?: boolean
+	/** Which list that panel shows. */
+	workGroup?: 'chats' | 'tasks' | 'jobs'
 	/** The version of each team task this person last ran, by team and task, so a change is shown. */
 	teamTasksSeen?: Record<string, string>
 }
@@ -273,6 +277,8 @@ export type MenuCommand =
 	| { type: 'copy-invite' }
 	| { type: 'check-updates' }
 	| { type: 'toggle-sidebar' }
+	| { type: 'toggle-work' }
+	| { type: 'find' }
 
 /** What the host's menus show that only the interface knows. */
 export type MenuState = {
@@ -281,6 +287,8 @@ export type MenuState = {
 	canInvite: boolean
 	/** So the View menu can say Show Sidebar or Hide Sidebar. */
 	sidebarCollapsed: boolean
+	/** And Show Your Work or Hide Your Work. */
+	workCollapsed: boolean
 }
 
 /**

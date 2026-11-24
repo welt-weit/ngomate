@@ -312,40 +312,6 @@ select.ngm-input {
 	color: var(--ngm-accent);
 }
 
-/* A section title folds its section; the chevron points down while it is open. */
-.ngm-button.ngm-quiet.ngm-side-toggle {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: var(--ngm-space-1);
-	width: 100%;
-	padding: var(--ngm-space-1) var(--ngm-space-1) var(--ngm-space-1) var(--ngm-space-2);
-	font-size: 12px;
-	font-weight: 600;
-	text-align: left;
-}
-
-/* The toggle carries the inset itself, so its hover reaches the edge. */
-.ngm-side-title:has(> .ngm-side-toggle) {
-	padding-left: 0;
-}
-
-.ngm-side-toggle-text {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.ngm-side-toggle svg {
-	flex: 0 0 auto;
-	transition: transform 0.15s;
-}
-
-.ngm-side-toggle[aria-expanded="true"] svg {
-	transform: rotate(90deg);
-}
-
 .ngm-side-section {
 	display: flex;
 	flex-direction: column;
@@ -438,25 +404,11 @@ select.ngm-input {
 	min-width: 0;
 }
 
-/* Everything set up once: the sections beside the one shown. */
+/* One page of what is set up once. */
 .ngm-settings {
 	display: flex;
 	flex: 1;
 	min-height: 0;
-}
-
-.ngm-settings-nav {
-	display: flex;
-	flex: 0 0 180px;
-	flex-direction: column;
-	gap: 2px;
-	/* Level with the page beside it, which starts 24px down. */
-	padding: var(--ngm-space-5) var(--ngm-space-3) var(--ngm-space-3);
-	border-right: 1px solid var(--ngm-line);
-}
-
-.ngm-settings-nav .ngm-side-title {
-	margin-top: 0;
 }
 
 .ngm-settings-content {
@@ -1116,4 +1068,79 @@ select.ngm-input {
 .ngm-addon-facts dd {
 	margin: 0;
 	overflow-wrap: anywhere;
+}
+
+/* The work on the right: the sidebar's twin, so the two read as one design. */
+.ngm-work {
+	display: flex;
+	flex: 0 0 272px;
+	flex-direction: column;
+	gap: var(--ngm-space-2);
+	/* The head row on the tab bar's centre line, as on the left. */
+	padding: 2px var(--ngm-space-3) var(--ngm-space-3);
+	overflow: hidden;
+	font-size: 14px;
+	background: var(--ngm-panel);
+	border-left: 1px solid var(--ngm-line);
+}
+
+.ngm-work-collapsed {
+	flex-basis: 48px;
+	align-items: center;
+	gap: var(--ngm-space-1);
+	padding: 2px var(--ngm-space-2) var(--ngm-space-3);
+}
+
+.ngm-work-head {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.ngm-work-find {
+	flex: 1;
+	min-width: 0;
+}
+
+.ngm-work-find .ngm-input {
+	height: var(--ngm-row);
+}
+
+/* Chats, Tasks, Jobs: three equal parts of one row. */
+.ngm-work-groups {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 2px;
+}
+
+.ngm-work-groups .ngm-button.ngm-nav {
+	text-align: center;
+}
+
+.ngm-work-list {
+	gap: var(--ngm-space-2);
+}
+
+.ngm-work-empty,
+.ngm-side-note {
+	margin: 0;
+	padding: var(--ngm-space-1) var(--ngm-space-2);
+	font-size: 13px;
+	color: var(--ngm-muted);
+}
+
+/* A place to set up: its icon, then its name, on the list's text edge. */
+.ngm-places .ngm-button.ngm-nav {
+	display: flex;
+	align-items: center;
+	gap: var(--ngm-space-2);
+}
+
+.ngm-places .ngm-button.ngm-nav svg {
+	flex: 0 0 auto;
+	color: var(--ngm-muted);
+}
+
+.ngm-side-scroll:has(.ngm-places) {
+	gap: var(--ngm-space-3);
 }

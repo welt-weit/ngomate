@@ -4,14 +4,6 @@ import { usePrimitives } from './primitives.js'
 
 export type SettingsSection = 'you' | 'model' | 'addons' | 'team' | 'about'
 
-const LABELS: Record<SettingsSection, string> = {
-	you: 'You',
-	model: 'Model',
-	addons: 'Connectors',
-	team: 'Teams',
-	about: 'About',
-}
-
 /** The person: how a team sees them. Kept on this computer and in the teams they write to. */
 function YouSection({
 	settings,
@@ -72,15 +64,14 @@ function AboutSection({ host, onCheckUpdates }: { host: NgomateHost; onCheckUpda
 }
 
 /**
- * Everything set up once, in one place, opened from ⚙ or ⌘,. The sections are the pages the app
- * already had; this only gathers them.
+ * One page of what is set up once, opened from the sidebar's list. The pages are the ones the app
+ * already had; this only places them.
  */
 export function SettingsPage({
 	host,
 	settings,
 	onChange,
 	section,
-	onSection,
 	onCheckUpdates,
 	sections,
 }: {
@@ -88,40 +79,16 @@ export function SettingsPage({
 	settings: Settings
 	onChange: (settings: Settings) => void
 	section: SettingsSection
-	onSection: (section: SettingsSection) => void
 	onCheckUpdates: () => void
 	/** The pages for the sections the app shows itself: model, connectors and teams. */
 	sections: Partial<Record<SettingsSection, ReactNode>>
 }) {
-	const { Button } = usePrimitives()
-	const shown: SettingsSection[] = [
-		'you',
-		'model',
-		'addons',
-		...(sections.team ? ['team' as const] : []),
-		'about',
-	]
-	const current = shown.includes(section) ? section : 'model'
 	return (
 		<div className="ngm-settings">
-			<nav className="ngm-settings-nav" aria-label="Settings">
-				<h2 className="ngm-side-title">Settings</h2>
-				{shown.map((name) => (
-					<Button
-						variant="nav"
-						key={name}
-						active={name === current}
-						aria-current={name === current ? 'page' : undefined}
-						onClick={() => onSection(name)}
-					>
-						{LABELS[name]}
-					</Button>
-				))}
-			</nav>
 			<div className="ngm-settings-content">
-				{current === 'you' && <YouSection settings={settings} onChange={onChange} />}
-				{current === 'about' && <AboutSection host={host} onCheckUpdates={onCheckUpdates} />}
-				{current !== 'you' && current !== 'about' && sections[current]}
+				{section === 'you' && <YouSection settings={settings} onChange={onChange} />}
+				{section === 'about' && <AboutSection host={host} onCheckUpdates={onCheckUpdates} />}
+				{section !== 'you' && section !== 'about' && (sections[section] ?? sections.model)}
 			</div>
 		</div>
 	)

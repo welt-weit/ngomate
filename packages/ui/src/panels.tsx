@@ -425,7 +425,7 @@ export function MemoryPanel({
 
 	return (
 		<section className="ngm-panel">
-			<h2>Memory</h2>
+			<h2>Notes</h2>
 			<p className="ngm-muted">
 				Notes the assistant reads at the start of a conversation. They are plain Markdown files on
 				this computer, and it asks you before saving one.

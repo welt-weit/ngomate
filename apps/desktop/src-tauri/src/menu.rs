@@ -18,6 +18,9 @@ pub struct MenuState {
     /// The View menu names what the item will do: Show Sidebar or Hide Sidebar.
     #[serde(default)]
     pub sidebar_collapsed: bool,
+    /// The same for the panel of chats, tasks and jobs on the right.
+    #[serde(default)]
+    pub work_collapsed: bool,
 }
 
 #[derive(Deserialize, Clone)]
@@ -117,13 +120,24 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, state: &MenuState) -> tauri::Result
                 },
                 Some("CmdOrCtrl+Backslash"),
             )?,
+            &item(
+                app,
+                "toggle-work",
+                if state.work_collapsed {
+                    "Show Your Work"
+                } else {
+                    "Hide Your Work"
+                },
+                Some("CmdOrCtrl+Shift+Backslash"),
+            )?,
+            &item(app, "find", "Find…", Some("CmdOrCtrl+K"))?,
             &separator()?,
             &item(app, "show:chat", "Conversations", None)?,
             &separator()?,
             &item(app, "show:model", "Model", None)?,
             &item(app, "show:addons", "Connectors", None)?,
-            &item(app, "show:memory", "Memory", None)?,
-            &item(app, "show:team", "Team", None)?,
+            &item(app, "show:memory", "Notes", None)?,
+            &item(app, "show:team", "Teams", None)?,
             &separator()?,
             &PredefinedMenuItem::fullscreen(app, None)?,
         ],

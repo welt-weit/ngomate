@@ -29,9 +29,20 @@ export const ICONS = {
 		'M10.5 5.5l-4.3 4.3a1.25 1.25 0 0 0 1.8 1.8l4.6-4.6a2.5 2.5 0 0 0-3.5-3.5l-4.7 4.7a3.7 3.7 0 0 0 5.2 5.2l3.4-3.4',
 	send: 'M8 13V3M4 7l4-4 4 4',
 	stop: 'M4.5 4.5h7v7h-7z',
-	chevron: 'M6 4l4 4-4 4',
 	/** Someone with no name yet. */
 	person:
 		'M8 8.5a2.75 2.75 0 1 0 0-5.5a2.75 2.75 0 1 0 0 5.5zM3 13.5c.8-2.4 2.7-3.5 5-3.5s4.2 1.1 5 3.5',
 	check: 'M3.5 8.5l3 3 6-7',
+	/** The sidebar's twin on the right: show or hide your work. */
+	panelRight: 'M2.5 3.5h11v9h-11zM10 3.5v9',
+	search: 'M7 11.5a4.5 4.5 0 1 0 0-9a4.5 4.5 0 1 0 0 9zM10.5 10.5l3 3',
+	pin: 'M6 2.5h4M7 2.5v3.5L4.5 8.5h7L9 6V2.5M8 8.5v5',
+	/** A chip: the model. */
+	model:
+		'M4.5 4.5h7v7h-7zM6.5 2v2.5M9.5 2v2.5M6.5 11.5V14M9.5 11.5V14M2 6.5h2.5M2 9.5h2.5M11.5 6.5H14M11.5 9.5H14',
+	/** A plug: the connectors. */
+	plug: 'M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v3',
+	/** Two people: the team. */
+	team: 'M6 7.5a2 2 0 1 0 0-4a2 2 0 1 0 0 4zM2.5 13c.5-2 1.8-3 3.5-3s3 1 3.5 3M11 7.5a1.75 1.75 0 1 0 0-3.5M11.5 10c1.2.2 2 1.1 2.4 2.5',
+	info: 'M8 14a6 6 0 1 0 0-12a6 6 0 1 0 0 12zM8 7.5v3.5M8 5.01v-.01',
 } as const

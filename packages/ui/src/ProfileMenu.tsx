@@ -29,8 +29,8 @@ export function ProfileMenu({
 	host: NgomateHost
 	settings: Settings
 	team: Team
-	/** Opens Settings, at this section or the one shown last. */
-	onSettings: (section?: SettingsSection) => void
+	/** Opens a setup page; here, only You. */
+	onSettings: (section: SettingsSection) => void
 	onAddTeam: () => void
 	onCheckUpdates: () => void
 }) {
@@ -94,11 +94,9 @@ export function ProfileMenu({
 					<span className="ngm-muted">{model}</span>
 				</div>
 			</div>
-			{!name && (
-				<Button variant="quiet" onClick={close(() => onSettings('you'))}>
-					Add your name
-				</Button>
-			)}
+			<Button variant="quiet" onClick={close(() => onSettings('you'))}>
+				{name ? 'Change your name' : 'Add your name'}
+			</Button>
 
 			{host.team && (
 				<>
@@ -143,14 +141,13 @@ export function ProfileMenu({
 				</>
 			)}
 
-			<hr className="ngm-popover-line" />
-			<Button variant="quiet" onClick={close(() => onSettings())}>
-				Settings…
-			</Button>
 			{host.checkForUpdate && (
-				<Button variant="quiet" onClick={close(onCheckUpdates)}>
-					Check for updates
-				</Button>
+				<>
+					<hr className="ngm-popover-line" />
+					<Button variant="quiet" onClick={close(onCheckUpdates)}>
+						Check for updates
+					</Button>
+				</>
 			)}
 		</Popover>
 	)

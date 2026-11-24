@@ -231,7 +231,7 @@ export const MemorySettings: Story = {
 		}),
 	},
 	play: async ({ canvasElement }) => {
-		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Memory' }))
+		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Notes' }))
 	},
 }
 
@@ -264,15 +264,13 @@ export const InTwoTeams: Story = {
 export const SettingsPage: Story = {
 	args: { host: createFakeHost({ teams: ['Riverside Water Group'] }) },
 	play: async ({ canvasElement }) => {
-		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Settings' }))
+		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Model' }))
 	},
 }
 
 export const TeamSettings: Story = {
 	args: { host: createFakeHost({ teams: ['Riverside Water Group'] }) },
 	play: async ({ canvasElement }) => {
-		const canvas = within(canvasElement)
-		await userEvent.click(await canvas.findByRole('button', { name: 'Settings' }))
-		await userEvent.click(await canvas.findByRole('button', { name: 'Teams' }))
+		await userEvent.click(await within(canvasElement).findByRole('button', { name: 'Teams' }))
 	},
 }
