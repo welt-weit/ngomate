@@ -77,6 +77,10 @@ const team: TeamHost = {
 	chooseFolder: () => call<string | null>('team_folder_choose'),
 	use: (location, secret) => call('team_use', { location, secret: secret ?? null }),
 	forget: () => call('team_forget'),
+	noteCopies: (id) => ({
+		load: () => call('team_note_copies_load', { id }),
+		save: (notes) => call('team_note_copies_save', { id, notes }),
+	}),
 	nextcloudLogin: {
 		start: (server) => call('nextcloud_login_start', { server }),
 		wait: (pollUrl, token) => call('nextcloud_login_wait', { pollUrl, token }),

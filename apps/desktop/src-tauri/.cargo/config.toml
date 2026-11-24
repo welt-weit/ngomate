@@ -1,0 +1,4 @@
+# Signs a macOS build before it starts, when NGOMATE_DEV_SIGNING_IDENTITY is set, so the keychain stops
+# asking again after every rebuild. Release builds are signed by the release workflow instead.
+[target.'cfg(target_os = "macos")']
+runner = "../scripts/sign-dev.sh"

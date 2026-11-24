@@ -6,6 +6,7 @@ import type {
 	ModelTiming,
 	TaskFile,
 	TeamFile,
+	TeamNoteCopies,
 	TeamStore,
 	ToolSource,
 	ToolTiming,
@@ -237,6 +238,11 @@ export interface TeamHost {
 	readTeamFile(): Promise<{ team: TeamFile; version: string } | null>
 	/** Throws `TeamConflict` when the file is no longer the version read. */
 	writeTeamFile(team: TeamFile, expected: string | null): Promise<void>
+	/**
+	 * Copies of one team's notes kept on this computer between starts, by version, so a new start fetches
+	 * only the notes that changed. Removed when the team is forgotten. Without it, every start reads all.
+	 */
+	noteCopies?(teamId: string): TeamNoteCopies
 	/**
 	 * Nextcloud's own sign-in, in the person's browser: `start` gives the page to open, `wait` returns
 	 * once they have signed in, with a password Nextcloud made for this app. A host without it leaves

@@ -299,13 +299,54 @@ export type TeamNotes = {
  * on S3 or WebDAV adds up on a slow line, and a note saved here clears it at once. */
 const LIST_REUSE_MS = 30_000
 
+/** Reads at once when notes are fetched: on S3 or WebDAV each one is a request, and one after another
+ * a large team keeps the first answer waiting. */
+const READS_AT_ONCE = 8
+
+/** A note as last read: the version it was read at and its text. */
+export type TeamNoteCopy = { version: string; text: string }
+
+/**
+ * Copies of one team's notes the host keeps between starts, so a new start fetches only the notes whose
+ * version changed. Bound to one team by the host: never handed another team's copies.
+ */
+export interface TeamNoteCopies {
+	load(): Promise<Record<string, TeamNoteCopy>>
+	save(notes: Record<string, TeamNoteCopy>): Promise<void>
+}
+
+async function eachAtMost<T>(items: T[], width: number, run: (item: T) => Promise<unknown>) {
+	let next = 0
+	const worker = async () => {
+		while (next < items.length) await run(items[next++] as T)
+	}
+	await Promise.all(Array.from({ length: Math.min(width, items.length) }, worker))
+}
+
 export function createTeamNotes(
 	store: TeamStore,
 	limits: () => TeamLimits,
 	now: () => number = Date.now,
+	copies?: TeamNoteCopies,
 ): TeamNotes {
 	const known = new Map<string, { version: string | null; text: string }>()
 	let listed: { at: number; entries: TeamEntry[] } | null = null
+	let loadedCopies: Promise<void> | null = null
+	let savedCopies = ''
+	let reading: Promise<{ name: string; text: string; updatedAt: string | null }[]> | null = null
+	const loadCopies = () => {
+		loadedCopies ??= (copies?.load() ?? Promise.resolve<Record<string, TeamNoteCopy>>({})).then(
+			(saved) => {
+				for (const [name, copy] of Object.entries(saved)) {
+					if (!known.has(name)) known.set(name, copy)
+				}
+				savedCopies = JSON.stringify(saved)
+			},
+			// Without copies, every note is fetched, as on a first start.
+			() => {},
+		)
+		return loadedCopies
+	}
 	const freshList = async () => {
 		const entries = await store.list('notes')
 		listed = { at: now(), entries }
@@ -343,20 +384,46 @@ export function createTeamNotes(
 			known.delete(name)
 			listed = null
 		},
-		async readAll() {
-			const entries =
-				listed && now() - listed.at < LIST_REUSE_MS ? listed.entries : await freshList()
-			const all = []
-			for (const entry of entries) {
-				const cached = known.get(entry.name)
-				const textNow =
-					cached && cached.version !== null && cached.version === entry.version
-						? cached.text
-						: await read(entry.name).catch(() => null)
-				if (textNow !== null)
-					all.push({ name: entry.name, text: textNow, updatedAt: entry.updatedAt })
-			}
-			return all
+		readAll() {
+			// One read at a time: the app starts one when the team opens, and a first message joins it.
+			reading ??= (async () => {
+				await loadCopies()
+				const entries =
+					listed && now() - listed.at < LIST_REUSE_MS ? listed.entries : await freshList()
+				const fresh = (entry: TeamEntry) => {
+					const copy = known.get(entry.name)
+					return copy && copy.version !== null && copy.version === entry.version
+				}
+				const failed = new Set<string>()
+				await eachAtMost(
+					entries.filter((entry) => !fresh(entry)),
+					READS_AT_ONCE,
+					(entry) => read(entry.name).catch(() => failed.add(entry.name)),
+				)
+				const all: { name: string; text: string; updatedAt: string | null }[] = []
+				const keep: Record<string, TeamNoteCopy> = {}
+				for (const entry of entries) {
+					const copy = known.get(entry.name)
+					// A note that could not be read now is left out rather than shown as it was before.
+					if (!copy || failed.has(entry.name)) continue
+					all.push({ name: entry.name, text: copy.text, updatedAt: entry.updatedAt })
+					if (copy.version !== null) keep[entry.name] = { version: copy.version, text: copy.text }
+				}
+				const snapshot = JSON.stringify(keep)
+				if (copies && snapshot !== savedCopies) {
+					await copies.save(keep).then(
+						() => {
+							savedCopies = snapshot
+						},
+						// Copies are a shortcut; without them the next start fetches every note again.
+						() => {},
+					)
+				}
+				return all
+			})().finally(() => {
+				reading = null
+			})
+			return reading
 		},
 	}
 }

@@ -28,6 +28,8 @@ const COMMANDS: &[&str] = &[
     "team_folder_choose",
     "team_use",
     "team_forget",
+    "team_note_copies_load",
+    "team_note_copies_save",
     "nextcloud_login_start",
     "nextcloud_login_wait",
     "team_list",

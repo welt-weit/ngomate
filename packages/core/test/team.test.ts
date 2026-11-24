@@ -6,6 +6,7 @@ import type { ModelClient, ModelReply } from '../src/model.js'
 import {
 	DEFAULT_TEAM_LIMITS,
 	type TeamArea,
+	type TeamNoteCopy,
 	TeamConflict,
 	type TeamStore,
 	chooseTeamNotes,
@@ -329,11 +330,24 @@ describe('the memory at the start of a conversation', () => {
 		const { store } = memoryTeamStore()
 		const notes = createTeamNotes(store, () => DEFAULT_TEAM_LIMITS)
 		await notes.save('boreholes', 'Borehole repairs cost about 400 euros.')
-		await notes.save('office', 'The office opens at nine.')
-		const context = await buildMemoryContext(own, 80, { notes, question: 'borehole repair cost' })
+		await notes.save('office', 'The office opens at nine. '.repeat(10))
+		const context = await buildMemoryContext(own, 400, { notes, question: 'borehole repair cost' })
 		expect(context).toContain('I work on water projects.')
 		expect(context).toContain('team/boreholes (team note)')
 		expect(context).toContain('Other team notes, available through read_memory: team/office')
+	})
+
+	it('stays within its room with hundreds of team notes, counting those it leaves out', async () => {
+		const own = personalStore()
+		await own.write('me', 'I work on water projects.')
+		const { store } = memoryTeamStore()
+		const notes = createTeamNotes(store, () => DEFAULT_TEAM_LIMITS)
+		await notes.save('boreholes', 'Borehole repairs cost about 400 euros.')
+		for (let i = 0; i < 200; i++) await notes.save(`meeting notes ${i}`, `Notes from meeting ${i}.`)
+		const context = await buildMemoryContext(own, 900, { notes, question: 'borehole repair cost' })
+		expect(context.length).toBeLessThanOrEqual(900)
+		expect(context).toContain('Borehole repairs cost about 400 euros.')
+		expect(context).toMatch(/\d+ more not named here, listed by list_memory\.$/)
 	})
 })
 
@@ -422,5 +436,87 @@ describe('reading team notes for each message', () => {
 		await notes.save('other', 'more')
 		await notes.readAll()
 		expect(list).toHaveBeenCalledTimes(4)
+	})
+	it('fetches on a new start only the notes whose version changed', async () => {
+		const { store, files } = memoryTeamStore()
+		for (const name of ['a', 'b', 'c'])
+			files.set(`notes/${name}`, { text: `Note ${name}.`, version: `${name}1` })
+		let kept: Record<string, TeamNoteCopy> = {}
+		const copies = {
+			load: async () => kept,
+			save: vi.fn(async (notes: Record<string, TeamNoteCopy>) => {
+				kept = notes
+			}),
+		}
+		const read = vi.spyOn(store, 'read')
+		await createTeamNotes(store, () => DEFAULT_TEAM_LIMITS, Date.now, copies).readAll()
+		expect(read).toHaveBeenCalledTimes(3)
+
+		files.set('notes/b', { text: 'Note b, changed.', version: 'b2' })
+		files.delete('notes/c')
+		read.mockClear()
+		const again = await createTeamNotes(
+			store,
+			() => DEFAULT_TEAM_LIMITS,
+			Date.now,
+			copies,
+		).readAll()
+		expect(read.mock.calls.map(([, name]) => name)).toEqual(['b'])
+		expect(again.map((note) => note.text)).toEqual(['Note a.', 'Note b, changed.'])
+		expect(Object.keys(kept)).toEqual(['a', 'b'])
+	})
+
+	it('saves the copies only when they changed', async () => {
+		const { store, files } = memoryTeamStore()
+		files.set('notes/a', { text: 'A.', version: 'a1' })
+		const copies = { load: async () => ({}), save: vi.fn(async () => {}) }
+		let clock = 0
+		const notes = createTeamNotes(
+			store,
+			() => DEFAULT_TEAM_LIMITS,
+			() => clock,
+			copies,
+		)
+		await notes.readAll()
+		clock = 31_000
+		await notes.readAll()
+		expect(copies.save).toHaveBeenCalledTimes(1)
+	})
+
+	it('reads a few notes at once, and a second request joins the one under way', async () => {
+		const { store, files } = memoryTeamStore()
+		for (let i = 0; i < 30; i++) files.set(`notes/n${i}`, { text: `Note ${i}.`, version: `v${i}` })
+		const read = store.read
+		let open = 0
+		let most = 0
+		let calls = 0
+		store.read = async (area, name) => {
+			calls++
+			open++
+			most = Math.max(most, open)
+			await new Promise((resolve) => setTimeout(resolve, 1))
+			open--
+			return read(area, name)
+		}
+		const notes = createTeamNotes(store, () => DEFAULT_TEAM_LIMITS)
+		const [first, second] = await Promise.all([notes.readAll(), notes.readAll()])
+		expect(first).toHaveLength(30)
+		expect(second).toBe(first)
+		expect(calls).toBe(30)
+		expect(most).toBe(8)
+	})
+
+	it('leaves out a note that cannot be read now, even with an older copy', async () => {
+		const { store, files } = memoryTeamStore()
+		files.set('notes/a', { text: 'New text.', version: 'a2' })
+		const copies = {
+			load: async () => ({ a: { version: 'a1', text: 'Old text.' } }),
+			save: async () => {},
+		}
+		store.read = async () => {
+			throw new Error('offline')
+		}
+		const all = await createTeamNotes(store, () => DEFAULT_TEAM_LIMITS, Date.now, copies).readAll()
+		expect(all).toEqual([])
 	})
 })

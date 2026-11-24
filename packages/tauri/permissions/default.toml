@@ -32,6 +32,8 @@ permissions = [
   "allow-team-folder-choose",
   "allow-team-use",
   "allow-team-forget",
+  "allow-team-note-copies-load",
+  "allow-team-note-copies-save",
   "allow-nextcloud-login-start",
   "allow-nextcloud-login-wait",
   "allow-team-list",

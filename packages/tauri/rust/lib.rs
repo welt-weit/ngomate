@@ -18,6 +18,7 @@ use error::{Error, Result};
 use models::{Downloads, FolderChange};
 use runtime::{Running, Runtime};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::ipc::Channel;
 use tauri::plugin::{Builder, TauriPlugin};
@@ -251,8 +252,62 @@ fn team_forget<R: TauriRuntime>(app: AppHandle<R>) -> Result<()> {
     let mut teams = read_teams(&app)?;
     if let Some(removed) = teams.forget_active() {
         let _ = team_secret(&removed.id)?.delete_credential();
+        if let Ok(path) = note_copies_path(&app, &removed.id) {
+            let _ = std::fs::remove_file(path);
+        }
     }
     keep_teams(&app, &teams)
+}
+
+/// One note's copy: the version it was read at and its text.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct NoteCopy {
+    version: String,
+    text: String,
+}
+
+/// A team's notes as last read, by version, so a new start fetches only the notes that changed. One
+/// file per team, named by its id, so one team's notes are never read as another's.
+fn note_copies_path<R: TauriRuntime>(app: &AppHandle<R>, id: &str) -> Result<PathBuf> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(Error::msg("Not a team on this computer."));
+    }
+    Ok(data_root(app)?.join("team-notes").join(format!("{id}.json")))
+}
+
+/// A team in a synced folder already has every note on this computer, so no copies are kept for it.
+fn keeps_note_copies<R: TauriRuntime>(app: &AppHandle<R>, id: &str) -> Result<bool> {
+    let teams = read_teams(app)?;
+    let team = teams.teams.iter().find(|team| team.id == id).ok_or_else(|| Error::msg("Not a team on this computer."))?;
+    Ok(!matches!(team.location, team::Location::Folder { .. }))
+}
+
+#[tauri::command]
+fn team_note_copies_load<R: TauriRuntime>(app: AppHandle<R>, id: String) -> Result<HashMap<String, NoteCopy>> {
+    if !keeps_note_copies(&app, &id)? {
+        return Ok(HashMap::new());
+    }
+    match std::fs::read_to_string(note_copies_path(&app, &id)?) {
+        Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_default()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+#[tauri::command]
+fn team_note_copies_save<R: TauriRuntime>(app: AppHandle<R>, id: String, notes: HashMap<String, NoteCopy>) -> Result<()> {
+    if !keeps_note_copies(&app, &id)? {
+        return Ok(());
+    }
+    let path = note_copies_path(&app, &id)?;
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    let text = serde_json::to_string(&notes).map_err(|err| Error::msg(err.to_string()))?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, text)?;
+    std::fs::rename(temp, path)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -304,9 +359,23 @@ fn keychain_entry(name: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(KEYCHAIN_SERVICE, name).map_err(|err| Error::msg(err.to_string()))
 }
 
+/// The secrets the interface may handle: the model server's key and each connector's token. Anything
+/// else, such as a team's storage key, stays with this plugin, so a page that has been tricked into
+/// running script cannot read, replace or remove it.
+fn page_may_use(name: &str) -> bool {
+    name == "model-server" || name.strip_prefix("addon:").is_some_and(|id| !id.is_empty())
+}
+
+fn page_secret(name: &str) -> Result<keyring::Entry> {
+    if !page_may_use(name) {
+        return Err(Error::msg("This secret is not available to the interface."));
+    }
+    keychain_entry(name)
+}
+
 #[tauri::command]
 fn secret_get(name: String) -> Result<Option<String>> {
-    match keychain_entry(&name)?.get_password() {
+    match page_secret(&name)?.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(err) => Err(Error::msg(err.to_string())),
@@ -315,12 +384,12 @@ fn secret_get(name: String) -> Result<Option<String>> {
 
 #[tauri::command]
 fn secret_set(name: String, value: String) -> Result<()> {
-    keychain_entry(&name)?.set_password(&value).map_err(|err| Error::msg(err.to_string()))
+    page_secret(&name)?.set_password(&value).map_err(|err| Error::msg(err.to_string()))
 }
 
 #[tauri::command]
 fn secret_delete(name: String) -> Result<()> {
-    match keychain_entry(&name)?.delete_credential() {
+    match page_secret(&name)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(err) => Err(Error::msg(err.to_string())),
     }
@@ -612,6 +681,8 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             team_folder_choose,
             team_use,
             team_forget,
+            team_note_copies_load,
+            team_note_copies_save,
             nextcloud_login_start,
             nextcloud_login_wait,
             team_list,
@@ -657,6 +728,16 @@ mod tests {
         assert_eq!(json["baseUrl"], "http://127.0.0.1:1/v1");
         assert_eq!(json["contextTokens"], 4096);
         assert_eq!(json["searchKnowledgeFirst"], true);
+    }
+
+    #[test]
+    fn the_interface_cannot_reach_a_teams_secret() {
+        for name in ["model-server", "addon:addon-mf3k2-x7q9a1"] {
+            assert!(page_may_use(name), "{name:?} should be allowed");
+        }
+        for name in ["team:t1", "team:", "", "addon:", "model-server-2", "Addon:x", "other"] {
+            assert!(!page_may_use(name), "{name:?} should be refused");
+        }
     }
 
     #[test]

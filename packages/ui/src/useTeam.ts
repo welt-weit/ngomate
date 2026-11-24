@@ -205,9 +205,22 @@ export function useTeam(host: NgomateHost, addons: Addon[] = []): Team {
 	// notes said must never be read as another's.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a new team gets new notes
 	const notes = useMemo(
-		() => (store && usable ? createTeamNotes(store, () => limits.current) : null),
+		() =>
+			store && usable
+				? createTeamNotes(
+						store,
+						() => limits.current,
+						undefined,
+						activeId ? host.team?.noteCopies?.(activeId) : undefined,
+					)
+				: null,
 		[store, usable, activeId],
 	)
+
+	// Fetched when the team opens rather than when the first question is sent, which then joins it.
+	useEffect(() => {
+		notes?.readAll().catch(() => {})
+	}, [notes])
 
 	const switchTo = useCallback(
 		async (id: string) => {

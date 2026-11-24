@@ -159,7 +159,7 @@ describe('memory', () => {
 
 	it('starts a conversation with what fits, newest first, and names the rest', async () => {
 		const store = memoryStore({ old: 'x'.repeat(300), recent: 'Recent note.' })
-		const context = await buildMemoryContext(store, 100)
+		const context = await buildMemoryContext(store, 300)
 		expect(context).toContain('Recent note.')
 		expect(context).not.toContain('xxx')
 		expect(context).toContain('Other notes, available through read_memory: old')
