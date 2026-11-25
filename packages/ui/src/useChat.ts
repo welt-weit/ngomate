@@ -20,6 +20,14 @@ import {
 	taskFileToProfile,
 } from '@ngomate/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+	type Draft,
+	type MakingContext,
+	draftToolName,
+	draftToolSource,
+	makingInstructions,
+	parseDraft,
+} from './drafts.js'
 import type {
 	Addon,
 	AnswerNotice,
@@ -142,6 +150,11 @@ export type SendOptions = {
 	prompt?: { title: string; text: string }
 	/** Said to the model beside the date and the notes, such as when a job last ran. */
 	context?: string
+	/**
+	 * For a chat where a task or job is being made: what it may be drafted from. Taken only while the
+	 * conversation has a draft not yet saved; the model then gets the draft tool and nothing else.
+	 */
+	making?: MakingContext
 }
 
 export type PendingWrite = WriteRequest & {
@@ -274,7 +287,11 @@ export async function answerRequest(
 	hooks: AnswerHooks,
 ): Promise<AnswerResult> {
 	const { host } = deps
-	const { task, documents = [], prompt } = options
+	// A chat making a task or job talks about that alone: no ready-made task, no connectors, no notes.
+	const making = current.draft && !current.draft.saved ? options.making : undefined
+	let draft: Draft | undefined = current.draft
+	const { documents = [], prompt } = options
+	const task = making ? undefined : options.task
 	const request = [prompt?.text, text].filter(Boolean).join('\n\n')
 	const named = documents.length
 		? `[Attached: ${documents.map((document) => document.name).join(', ')}]`
@@ -316,10 +333,23 @@ export async function answerRequest(
 	const times = { ...current.times, [current.messages.length]: new Date().toISOString() }
 	const tasks = task ? { ...current.tasks, [current.messages.length]: task.id } : current.tasks
 	let latest: Conversation = current
-	const keep = async (next: Conversation) => {
+	// One save after another, so a draft saved while the answer is written never lands after the answer.
+	let saving: Promise<void> = Promise.resolve()
+	const keep = (next: Conversation) => {
 		latest = next
-		await hooks.save(next)
+		saving = saving.catch(() => {}).then(() => hooks.save(next))
+		return saving
 	}
+	const makingProfile =
+		making && draft
+			? {
+					id: `make-${draft.kind}`,
+					instructions: makingInstructions(draft, making),
+					readTools: [draftToolName(draft.kind)],
+					writeTools: [],
+					instructionsInRequest: true,
+				}
+			: null
 	try {
 		// Saved before anything can fail, because the composer has already been cleared.
 		await keep({
@@ -353,25 +383,39 @@ export async function answerRequest(
 		const seen = new Set<string>()
 		// A ready-made task gets notes as context, not as tools that distract a small model from the job.
 		const team = deps.team
-		tools = await connectTools(
-			host,
-			deps.settings.addons,
-			!task,
-			(name) => {
-				if (!seen.has(name)) hooks.onProblem?.(name)
-				seen.add(name)
-			},
-			team,
-		)
+		tools = making
+			? draftToolSource(
+					making,
+					() => draft ?? { kind: 'task', task: {}, job: {} },
+					(next) => {
+						draft = next
+						// Shown at once, so the card fills in while the answer is still being written.
+						keep({ ...latest, draft: next }).catch((err) =>
+							console.error('The draft could not be kept:', err),
+						)
+					},
+				)
+			: await connectTools(
+					host,
+					deps.settings.addons,
+					!task,
+					(name) => {
+						if (!seen.has(name)) hooks.onProblem?.(name)
+						seen.add(name)
+					},
+					team,
+				)
 
-		const memory = await buildMemoryContext(
-			host.memory,
-			room.memory,
-			team ? { notes: team.notes, question: passageQuery(text, current.messages) } : undefined,
-		).catch(() => '')
+		const memory = making
+			? ''
+			: await buildMemoryContext(
+					host.memory,
+					room.memory,
+					team ? { notes: team.notes, question: passageQuery(text, current.messages) } : undefined,
+				).catch(() => '')
 		const context = [
 			`Today is ${new Date().toISOString().slice(0, 10)}.`,
-			connectedServices(deps.settings.addons),
+			making ? '' : connectedServices(deps.settings.addons),
 			options.context ?? '',
 			memory,
 		]
@@ -382,7 +426,7 @@ export async function answerRequest(
 		// answer off course, and a knowledge base of field practice has nothing for them anyway. A model
 		// that seldom asks, or answers without reading what a search it asked for found, is searched for.
 		const knowledge =
-			!task && text.trim() && deps.settings.addons.some((addon) => addon.enabled)
+			!task && !making && text.trim() && deps.settings.addons.some((addon) => addon.enabled)
 				? {
 						query: passageQuery(text, current.messages),
 						maxChars: room.knowledge,
@@ -407,7 +451,7 @@ export async function answerRequest(
 		const run = await runTask({
 			model,
 			tools,
-			profile: task ? taskFileToProfile(task) : CHAT_PROFILE,
+			profile: makingProfile ?? (task ? taskFileToProfile(task) : CHAT_PROFILE),
 			input,
 			attachments,
 			knowledge,
@@ -485,6 +529,7 @@ export async function answerRequest(
 			times,
 			tasks,
 			documents: allDocuments,
+			...(draft ? { draft } : {}),
 		})
 		return { conversation: latest, error, answer: run.answer ?? null, notice }
 	} catch (err) {
@@ -519,15 +564,35 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	const [readingDocument, setReadingDocument] = useState(false)
 	const [budget, setBudget] = useState(() => textBudget())
 	const abort = useRef<AbortController | null>(null)
+	// The stored conversation has been read: before that, nothing may be saved over it.
+	const [loaded, setLoaded] = useState(false)
+	// The newest conversation, for changes made after an await, which a render's copy may predate.
+	const conversationRef = useRef(conversation)
 
 	useEffect(() => {
 		let current = true
+		setLoaded(false)
 		setError(null)
 		setProblems([])
 		setStreaming('')
-		host.readConversation(conversationId).then((stored) => {
-			if (current) setConversation(stored ?? newConversation(conversationId))
-		})
+		host.readConversation(conversationId).then(
+			(stored) => {
+				if (!current) return
+				const draft = parseDraft(stored?.draft)
+				const { draft: _stored, ...rest } = stored ?? newConversation(conversationId)
+				const read = draft ? { ...rest, draft } : rest
+				conversationRef.current = read
+				setConversation(read)
+				setLoaded(true)
+			},
+			// Never counted as read: anything saved now would replace the stored chat with an empty one.
+			(err) => {
+				if (current)
+					setError(
+						`This chat could not be read: ${err instanceof Error ? err.message : String(err)}`,
+					)
+			},
+		)
 		return () => {
 			current = false
 			abort.current?.abort()
@@ -536,6 +601,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 
 	const save = useCallback(
 		async (next: Conversation) => {
+			conversationRef.current = next
 			setConversation(next)
 			await host.writeConversation(next)
 			depsRef.current.onSaved()
@@ -547,6 +613,8 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 		async (text: string, options: SendOptions = {}, from?: Conversation) => {
 			// Retry starts from the conversation without its last question, which this render has not seen yet.
 			const current = from ?? conversation
+			// Before the stored chat is read, anything saved would replace it with this empty one.
+			if (!loaded) return setError('This chat is not read yet. Wait a moment and send again.')
 			if (!text.trim() && !options.prompt?.text?.trim() && !options.documents?.length) return
 			// Said before anything starts, as it always was: nothing is sent, so nothing is busy.
 			const missing = missingConnector(depsRef.current, options.task)
@@ -615,7 +683,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				abort.current = null
 			}
 		},
-		[conversation, save],
+		[conversation, save, loaded],
 	)
 
 	const stop = useCallback(() => abort.current?.abort(), [])
@@ -625,28 +693,46 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	 * ready-made task it was asked through. One this app no longer has, or one asked before tasks were
 	 * kept, goes as a plain message.
 	 */
-	const retry = useCallback(() => {
-		const at = conversation.messages.findLastIndex((message) => message.role === 'user')
-		const question = conversation.messages[at]
-		if (at < 0 || !question?.content) return
-		const before = <T>(record: Record<number, T> = {}) =>
-			Object.fromEntries(Object.entries(record).filter(([index]) => Number(index) < at))
-		const taskId = conversation.tasks?.[at]
-		const task = taskId
-			? [...host.tasks, ...(depsRef.current.team?.tasks ?? [])].find((known) => known.id === taskId)
-			: undefined
-		return send(
-			question.content,
-			{ task },
-			{
-				...conversation,
-				messages: conversation.messages.slice(0, at),
-				notices: before(conversation.notices),
-				times: before(conversation.times),
-				tasks: before(conversation.tasks),
-			},
-		)
-	}, [conversation, host, send])
+	const retry = useCallback(
+		(making?: MakingContext) => {
+			const at = conversation.messages.findLastIndex((message) => message.role === 'user')
+			const question = conversation.messages[at]
+			if (at < 0 || !question?.content) return
+			const before = <T>(record: Record<number, T> = {}) =>
+				Object.fromEntries(Object.entries(record).filter(([index]) => Number(index) < at))
+			const taskId = conversation.tasks?.[at]
+			const task = taskId
+				? [...host.tasks, ...(depsRef.current.team?.tasks ?? [])].find(
+						(known) => known.id === taskId,
+					)
+				: undefined
+			// A chat making something is retried making it: never with the connectors and notes of a chat.
+			return send(
+				question.content,
+				{ task, making },
+				{
+					...conversation,
+					messages: conversation.messages.slice(0, at),
+					notices: before(conversation.notices),
+					times: before(conversation.times),
+					tasks: before(conversation.tasks),
+				},
+			)
+		},
+		[conversation, host, send],
+	)
+
+	/** The conversation as it is now, past any render. */
+	const latest = useCallback(() => conversationRef.current, [])
+
+	/** Sets the task or job this chat is making, or clears it; a saved one names the chat after it. */
+	const updateDraft = useCallback(
+		(draft: Draft | undefined, title?: string) => {
+			const { draft: _old, ...rest } = conversationRef.current
+			return save({ ...rest, ...(draft ? { draft } : {}), ...(title ? { title } : {}) })
+		},
+		[save],
+	)
 
 	/** Takes a document out of the conversation, so it is not sent with any later message. */
 	const removeDocument = useCallback(
@@ -673,5 +759,8 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 		retry,
 		stop,
 		removeDocument,
+		updateDraft,
+		loaded,
+		latest,
 	}
 }

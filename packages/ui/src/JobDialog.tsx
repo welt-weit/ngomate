@@ -8,9 +8,12 @@ import {
 	destinationNote,
 	isTimeZone,
 	jobId,
+	parseSchedule,
 } from '@ngomate/core'
-import { useState } from 'react'
+import { useId, useState } from 'react'
+import type { JobDraft } from './drafts.js'
 import { usePrimitives } from './primitives.js'
+import { isOwnTask } from './useOwnTasks.js'
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
 
@@ -47,6 +50,9 @@ export function JobDialog({
 	teamId,
 	canWriteTeamNotes,
 	canShareWithTeam,
+	initial,
+	editing = false,
+	zone: givenZone,
 	onCreate,
 	onClose,
 }: {
@@ -58,28 +64,50 @@ export function JobDialog({
 	canWriteTeamNotes: boolean
 	/** The team's storage can share jobs, so one can run on whichever member's computer is on. */
 	canShareWithTeam: boolean
+	/** Filled in from a draft made in words, or from the job being changed. */
+	initial?: JobDraft
+	/** Changing a job that exists: who it is for stays as it is. */
+	editing?: boolean
+	/** The zone of a team job being changed, kept whoever changes it. */
+	zone?: string
 	onCreate: (job: JobFile, options: { team: boolean; taskVersion: string | null }) => Promise<void>
 	onClose: () => void
 }) {
 	const { Button, Input, TextArea, Select, Dialog } = usePrimitives()
-	const [taskId, setTaskId] = useState(tasks[0]?.task.id ?? '')
+	// A task that is not here (deleted, or another team's) stays named, and must be picked again: the
+	// job is never quietly given another one.
+	const missingTask =
+		initial?.task && !tasks.some((each) => each.task.id === initial.task) ? initial.task : null
+	const [taskId, setTaskId] = useState(initial?.task ?? tasks[0]?.task.id ?? '')
 	const choice = tasks.find((each) => each.task.id === taskId)
-	const [title, setTitle] = useState(choice?.task.title ?? '')
-	const [inputs, setInputs] = useState('')
-	const [every, setEvery] = useState<Schedule['every']>('week')
-	const [weekday, setWeekday] = useState<Weekday>('mon')
-	const [monthDay, setMonthDay] = useState(1)
-	const [time, setTime] = useState('09:00')
+	const start = (() => {
+		try {
+			return initial?.schedule ? parseSchedule(initial.schedule) : null
+		} catch {
+			return null
+		}
+	})()
+	const [title, setTitle] = useState(initial?.title ?? choice?.task.title ?? '')
+	const [inputs, setInputs] = useState(initial?.inputs ?? '')
+	const [every, setEvery] = useState<Schedule['every']>(start?.every ?? 'week')
+	const [weekday, setWeekday] = useState<Weekday>(start?.every === 'week' ? start.day : 'mon')
+	const [monthDay, setMonthDay] = useState(start?.every === 'month' ? start.day : 1)
+	const [time, setTime] = useState(start?.time ?? '09:00')
 	// A job for one person writes to that person's notes unless they choose the team's.
-	const [where, setWhere] = useState<'note' | 'team-note'>('note')
-	const [noteName, setNoteName] = useState('')
-	const [forTeam, setForTeam] = useState(false)
+	const [where, setWhere] = useState<'note' | 'team-note'>(
+		initial?.writeTo === 'team-notes' ? 'team-note' : 'note',
+	)
+	const [noteName, setNoteName] = useState(initial?.note ?? '')
+	const [teamChosen, setForTeam] = useState(Boolean(initial?.forTeam))
+	// Only where the team can share jobs; a job being changed stays what it was.
+	const forTeam = teamChosen && (canShareWithTeam || editing)
 	// A team job keeps the zone it was made in, so its time is the same moment for every member. A
 	// system that names its zone by an abbreviation others may not know uses UTC, and says so.
 	const ownZone = Intl.DateTimeFormat().resolvedOptions().timeZone
-	const zone = isTimeZone(ownZone) ? ownZone : 'UTC'
+	const zone = givenZone ?? (isTimeZone(ownZone) ? ownZone : 'UTC')
 	const [problem, setProblem] = useState<string | null>(null)
 	const [saving, setSaving] = useState(false)
+	const formId = useId()
 
 	const schedule: Schedule =
 		every === 'day'
@@ -90,22 +118,41 @@ export function JobDialog({
 
 	if (!tasks.length) {
 		return (
-			<Dialog title="New job" onClose={onClose}>
+			<Dialog title="New job" onClose={onClose} actions={<Button onClick={onClose}>Close</Button>}>
 				<p>There are no ready-made tasks to run on a schedule.</p>
-				<div className="ngm-row">
-					<Button onClick={onClose}>Close</Button>
-				</div>
 			</Dialog>
 		)
 	}
 
 	return (
-		<Dialog title="New job" onClose={onClose}>
+		<Dialog
+			title={editing ? `Change ${initial?.title ?? 'the job'}` : 'New job'}
+			onClose={onClose}
+			problem={problem}
+			actions={
+				<>
+					<Button onClick={onClose}>Cancel</Button>
+					<Button type="submit" form={formId} variant="primary" disabled={saving || !choice}>
+						{editing ? 'Save the changes' : 'Make the job'}
+					</Button>
+				</>
+			}
+		>
 			<form
+				id={formId}
 				className="ngm-form"
 				onSubmit={async (event) => {
 					event.preventDefault()
-					if (!choice) return
+					if (!choice) {
+						setProblem('Pick the task this job runs.')
+						return
+					}
+					if (forTeam && isOwnTask(choice.task.id)) {
+						setProblem(
+							"A job for the team cannot run one of your own tasks: the others' computers do not have it.",
+						)
+						return
+					}
 					const name = title.trim() || choice.task.title
 					const destination = {
 						kind: forTeam ? ('team-note' as const) : where,
@@ -115,9 +162,11 @@ export function JobDialog({
 					const usesTeam = !forTeam && (destination.kind === 'team-note' || choice.fromTeam)
 					const wrong = !inputs.trim()
 						? `Write what the task needs: ${choice.task.ask.toLowerCase()}.`
-						: !TIME.test(time)
-							? 'Give the time as hours and minutes, such as 09:00.'
-							: noteNameProblem(destinationNote(destination, new Date()))
+						: every === 'month' && !(Number.isInteger(monthDay) && monthDay >= 1 && monthDay <= 28)
+							? 'Give the day of the month as a number from 1 to 28.'
+							: !TIME.test(time)
+								? 'Give the time as hours and minutes, such as 09:00.'
+								: noteNameProblem(destinationNote(destination, new Date()))
 					setProblem(wrong)
 					if (wrong) return
 					setSaving(true)
@@ -153,12 +202,20 @@ export function JobDialog({
 							if (next && (!title || title === choice?.task.title)) setTitle(next.task.title)
 						}}
 					>
-						{tasks.map((each) => (
-							<option key={each.task.id} value={each.task.id}>
-								{each.task.title}
-								{each.fromTeam ? ' (your team)' : ''}
+						{missingTask && (
+							<option value={missingTask} disabled>
+								{missingTask} (not here now: pick a task)
 							</option>
-						))}
+						)}
+						{tasks
+							// A team job runs on any member's computer, which has none of this person's own tasks.
+							.filter((each) => !forTeam || !isOwnTask(each.task.id))
+							.map((each) => (
+								<option key={each.task.id} value={each.task.id}>
+									{each.task.title}
+									{each.fromTeam ? ' (your team)' : isOwnTask(each.task.id) ? ' (yours)' : ''}
+								</option>
+							))}
 					</Select>
 				</label>
 				{choice && <p className="ngm-muted">{choice.task.description}</p>}
@@ -168,12 +225,18 @@ export function JobDialog({
 						cannot make sure only one computer runs each date.
 					</p>
 				)}
-				{canShareWithTeam && (
+				{canShareWithTeam && !editing && (
 					<label>
 						For
 						<Select
 							value={forTeam ? 'team' : 'me'}
-							onChange={(event) => setForTeam(event.target.value === 'team')}
+							onChange={(event) => {
+								const team = event.target.value === 'team'
+								setForTeam(team)
+								// A team job cannot run one of this person's own tasks: another is picked.
+								if (team && isOwnTask(taskId))
+									setTaskId(tasks.find((each) => !isOwnTask(each.task.id))?.task.id ?? '')
+							}}
 						>
 							<option value="me">Just me, on this computer</option>
 							<option value="team">The team, on whichever member's computer is on</option>
@@ -223,16 +286,16 @@ export function JobDialog({
 					{every === 'month' && (
 						<label>
 							On day
-							<Select
-								value={monthDay}
-								onChange={(event) => setMonthDay(Number(event.target.value))}
-							>
-								{Array.from({ length: 28 }, (_, index) => index + 1).map((day) => (
-									<option key={day} value={day}>
-										{day}
-									</option>
-								))}
-							</Select>
+							{/* Up to 28, so it is in every month. */}
+							<Input
+								type="number"
+								min="1"
+								max="28"
+								step="1"
+								required
+								value={Number.isNaN(monthDay) ? '' : monthDay}
+								onChange={(event) => setMonthDay(event.target.valueAsNumber)}
+							/>
 						</label>
 					)}
 					<label>
@@ -258,7 +321,15 @@ export function JobDialog({
 							onChange={(event) => setWhere(event.target.value as 'note' | 'team-note')}
 						>
 							<option value="note">My notes</option>
-							{canWriteTeamNotes && <option value="team-note">The team's notes</option>}
+							{(canWriteTeamNotes || where === 'team-note') && (
+								// Shown as it is, even with that team closed: the form never says one thing and
+								// saves another.
+								<option value="team-note">
+									{canWriteTeamNotes
+										? "The team's notes"
+										: "The team's notes (that team is not open)"}
+								</option>
+							)}
 						</Select>
 					</label>
 				)}
@@ -275,17 +346,6 @@ export function JobDialog({
 					assistant asks to change anything else, such as something in a connected service, nothing
 					happens until you allow it.
 				</p>
-				{problem && (
-					<p className="ngm-error" role="alert">
-						{problem}
-					</p>
-				)}
-				<div className="ngm-row">
-					<Button type="submit" variant="primary" disabled={saving || !choice}>
-						Make the job
-					</Button>
-					<Button onClick={onClose}>Cancel</Button>
-				</div>
 			</form>
 		</Dialog>
 	)

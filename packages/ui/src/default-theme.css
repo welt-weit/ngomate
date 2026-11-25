@@ -3,6 +3,9 @@
 	--ngm-bg: #ffffff;
 	--ngm-panel: #f6f7f8;
 	--ngm-line: #dfe2e6;
+	/* A button's own fill, apart from a field's white, and darker under the pointer. */
+	--ngm-control: #eceef1;
+	--ngm-control-hover: #dfe3e8;
 	--ngm-text: #1b1f24;
 	--ngm-muted: #5c6670;
 	--ngm-accent: #1f6f5c;
@@ -20,6 +23,8 @@
 		--ngm-bg: #16191d;
 		--ngm-panel: #1f2328;
 		--ngm-line: #343a41;
+		--ngm-control: #2a2f35;
+		--ngm-control-hover: #363c44;
 		--ngm-text: #e7eaee;
 		--ngm-muted: #a2acb6;
 		--ngm-accent: #4fb89f;

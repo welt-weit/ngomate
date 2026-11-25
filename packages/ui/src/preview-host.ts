@@ -16,6 +16,7 @@ import {
 	DEFAULT_SETTINGS,
 	type ModelHost,
 	type NgomateHost,
+	type OwnTaskStore,
 	type Settings,
 	type TeamHost,
 	type TeamMembership,
@@ -217,9 +218,20 @@ export type FakeHostOptions = {
 	teamStorage?: 'folder' | 'webdav'
 	/** Job files and their state, by id. */
 	jobs?: Record<string, { text: string; state?: JobState }>
+	/** Tasks the person made, by id, as their files' text. */
+	ownTasks?: Record<string, string>
 }
 
 /** Jobs in memory, as the desktop app keeps them in files. */
+export function memoryOwnTasks(initial: Record<string, string> = {}): OwnTaskStore {
+	const tasks = new Map(Object.entries(initial))
+	return {
+		list: async () => [...tasks].map(([id, text]) => ({ id, text })),
+		write: async (id, text) => void tasks.set(id, text),
+		remove: async (id) => void tasks.delete(id),
+	}
+}
+
 export function memoryJobStore(initial: FakeHostOptions['jobs'] = {}): JobStore {
 	const jobs = new Map(
 		Object.entries(initial).map(([id, job]) => [id, { text: job.text, state: job.state ?? null }]),
@@ -227,6 +239,11 @@ export function memoryJobStore(initial: FakeHostOptions['jobs'] = {}): JobStore 
 	return {
 		list: async () => [...jobs].map(([id, job]) => ({ id, ...job })),
 		write: async (id, text) => void jobs.set(id, { text, state: jobs.get(id)?.state ?? null }),
+		replace: async (id, text) => {
+			const job = jobs.get(id)
+			if (!job) throw new Error('This job is not there any more.')
+			jobs.set(id, { ...job, text })
+		},
 		update: async (id, change) => {
 			const job = jobs.get(id)
 			const next = change(job?.state ?? null)
@@ -329,6 +346,7 @@ export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 		tasks: TASKS,
 		memory: memoryStore(options.notes ?? {}),
 		jobs: memoryJobStore(options.jobs),
+		ownTasks: memoryOwnTasks(options.ownTasks),
 		models: options.models,
 		team: fakeTeams(options.teams ?? [], options.teamStorage),
 		loadSettings: async () => settings,

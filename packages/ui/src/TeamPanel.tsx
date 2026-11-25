@@ -730,7 +730,10 @@ function LimitsForm({
 			<label>
 				All team notes, in MB
 				<Input
-					inputMode="decimal"
+					type="number"
+					min="0.001"
+					step="any"
+					required
 					value={notesMb}
 					onChange={(event) => setNotesMb(event.target.value)}
 				/>
@@ -738,15 +741,21 @@ function LimitsForm({
 			<label>
 				One team note, in KB
 				<Input
-					inputMode="decimal"
+					type="number"
+					min="0.001"
+					step="any"
+					required
 					value={noteKb}
 					onChange={(event) => setNoteKb(event.target.value)}
 				/>
 			</label>
 			<label>
-				All team tasks, in MB
+				All team tasks and jobs, in MB
 				<Input
-					inputMode="decimal"
+					type="number"
+					min="0.001"
+					step="any"
+					required
 					value={tasksMb}
 					onChange={(event) => setTasksMb(event.target.value)}
 				/>

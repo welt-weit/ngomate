@@ -75,6 +75,7 @@ Each task is a plain text file, so you can read what it tells the model and chan
 - **Connects your other tools**: search services, knowledge bases and other tools plug in through the [Model Context Protocol](https://modelcontextprotocol.io). Anything that would change something asks you first.
 - **At home on a Mac**: its commands are in the menu bar with the usual shortcuts, including Settings (⌘,) and switching teams (⌘1 to ⌘9).
 - **Flags what it can't back up**: dates and links that don't come from your material or a tool are marked, so you know what to check.
+- **Your own tasks**: make a task in a short form, or say what you want and the assistant drafts it with you in a chat, shown as a card above it until you save it. The same works for jobs, and from any answer with **Make a task or job from this**. Built-in tasks can be copied and changed.
 - **Runs tasks on a schedule**: a job runs a ready-made task daily, weekly or monthly while the app is open, and writes the result to a note with what the checks found at the top. A time missed while the computer was off runs once when it is back. A job never changes anything on its own: what it asks to change waits under **Jobs** for you to allow. Where the system allows it, a notification says when a run is done. The chats of a job's last 20 runs are kept; older ones, and those of a job you delete, are deleted.
 
 > [!WARNING]

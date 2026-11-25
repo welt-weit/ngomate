@@ -12,6 +12,7 @@ import type {
 	ToolSource,
 	ToolTiming,
 } from '@ngomate/core'
+import type { Draft } from './drafts.js'
 import type { StoredLayout } from './layout.js'
 
 /** One model the app offers. Sizes in bytes. */
@@ -117,6 +118,17 @@ export type Settings = {
 	workGroup?: 'chats' | 'tasks' | 'jobs'
 	/** The version of each team task this person last ran, by team and task, so a change is shown. */
 	teamTasksSeen?: Record<string, string>
+	/** Chats where a task or job is being made in words and is not saved yet, by conversation id. */
+	drafts?: Record<string, 'task' | 'job'>
+	/** The chat each task or job was made in, by its key, so it can be changed in words there again. */
+	madeIn?: Record<string, string>
+}
+
+/** Where a person's own tasks are kept: one Markdown file each, named by the task's id. */
+export interface OwnTaskStore {
+	list(): Promise<{ id: string; text: string }[]>
+	write(id: string, text: string): Promise<void>
+	remove(id: string): Promise<void>
 }
 
 export const DEFAULT_SETTINGS: Settings = { model: null, addons: [] }
@@ -134,6 +146,8 @@ export type Conversation = {
 	times?: Record<number, string>
 	/** The ready-made task a question was asked through, by its id, keyed by position. So Retry can use it. */
 	tasks?: Record<number, string>
+	/** A task or job being made in this chat, shown as a card above it until it is saved or discarded. */
+	draft?: Draft
 }
 
 export type AnswerNotice = {
@@ -325,6 +339,8 @@ export interface NgomateHost {
 	 * are no jobs.
 	 */
 	jobs?: JobStore
+	/** Tasks the person made. A host without it leaves this out, and only built-in and team tasks show. */
+	ownTasks?: OwnTaskStore
 	/** Tells the person something finished while they may be looking elsewhere, as the system does. */
 	notify?(title: string, body: string): void
 	/** For a host with menus of its own: their commands, and what to show in them. */

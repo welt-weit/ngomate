@@ -31,6 +31,19 @@ import { parseMenuCommand } from '../src/menu.js'
 
 afterEach(cleanup)
 
+/** Opens a list item's "⋯" menu and picks one of its actions. */
+async function choose(scope: HTMLElement, item: string | RegExp, action: string | RegExp) {
+	await userEvent.click(
+		await within(scope).findByRole('button', {
+			name:
+				typeof item === 'string'
+					? `Actions for ${item}`
+					: new RegExp(`^Actions for ${item.source}`),
+		}),
+	)
+	await userEvent.click(await screen.findByRole('button', { name: action }))
+}
+
 const say = (content: string): ModelReply => ({
 	content,
 	toolCalls: [],
@@ -507,7 +520,7 @@ describe('team', () => {
 		const { host, saved } = makeHost([], folder.team)
 		render(<NgomateApp host={host} />)
 		await userEvent.click(await screen.findByRole('button', { name: 'Tasks' }))
-		await userEvent.click(await screen.findByRole('button', { name: /Weekly update/ }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Weekly update' }))
 		expect(await screen.findByText(/This task comes from your team/)).toBeTruthy()
 		expect(screen.getByText(/Write a short update\./)).toBeTruthy()
 		await userEvent.click(screen.getByRole('button', { name: 'Run it' }))
@@ -954,11 +967,11 @@ describe('the sidebar', () => {
 		await typeAndSend('Board letter')
 		await screen.findByText('Hello.')
 		const work = screen.getByRole('complementary', { name: 'Your work' })
-		await userEvent.click(await within(work).findByRole('button', { name: /^Pin / }))
+		await choose(work, /Board letter/, 'Pin')
 		await waitFor(() => expect(saved.at(-1)?.pinned).toHaveLength(1))
 		const sidebar = screen.getByRole('complementary', { name: 'Sidebar' })
 		expect(within(sidebar).queryByText('Pin a chat to keep it here.')).toBeNull()
-		await userEvent.click(within(sidebar).getByRole('button', { name: /^Unpin / }))
+		await choose(sidebar, /Board letter/, 'Unpin')
 		await waitFor(() => expect(saved.at(-1)?.pinned).toEqual([]))
 	})
 

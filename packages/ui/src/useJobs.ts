@@ -8,6 +8,7 @@ import {
 	afterFailure,
 	claimRun,
 	claimWatch,
+	formatSchedule,
 	isDue,
 	newJobState,
 	nextOccurrence,
@@ -72,6 +73,8 @@ export type Jobs = {
 	/** Why the last thing asked of the jobs did not happen, for the person to read. */
 	problem: string | null
 	create(job: JobFile, options: { team: boolean; taskVersion?: string }): Promise<void>
+	/** Writes a changed job over the one there, keeping its runs. A new schedule moves its next date. */
+	edit(key: string, job: JobFile, taskVersion?: string): Promise<void>
 	remove(key: string): Promise<void>
 	runNow(key: string): void
 	setPaused(key: string, paused: boolean): Promise<void>
@@ -99,7 +102,8 @@ function withRun(current: JobState | null, before: JobState, after: JobState): J
 	const added = after.runs[0] && after.runs[0] !== before.runs[0] ? after.runs[0] : null
 	return {
 		...current,
-		nextDue: after.nextDue,
+		// A next date changed meanwhile, by an edit of the job, stays: it is the newer schedule's.
+		nextDue: current.nextDue !== before.nextDue ? current.nextDue : after.nextDue,
 		tries: after.tries,
 		problem: after.problem,
 		claim: undefined,
@@ -530,12 +534,43 @@ export function useJobs(
 		create: async (job, { team, taskVersion }) => {
 			await attempt(async () => {
 				const store = storeOf(team)
-				if (!store) return
+				if (!store)
+					throw new Error(
+						team ? 'No team that can share jobs is open now.' : 'This app keeps no jobs.',
+					)
 				await store.write(job.id, serializeJobFile(job))
 				// The file is what makes the job: a state not written now is made on the next read.
 				const fresh = newJobState(job, new Date(), taskVersion)
 				await store.update(job.id, () => fresh).catch(() => {})
 				await reload(team)
+			}, true)
+		},
+		edit: async (key, job, taskVersion) => {
+			await attempt(async () => {
+				const item = listRef.current.find((each) => each.key === key)
+				const store = item && storeOf(item.team)
+				if (!item || !store) throw new Error('This job is not there any more.')
+				// A run of the old job would record its next date over the new one: it stops, not as a try.
+				if (current.current?.key === key) current.current.stop.abort('removed' satisfies StopReason)
+				await store.replace(item.id, serializeJobFile({ ...job, id: item.id }))
+				const moved =
+					formatSchedule(job.schedule) !== (item.job && formatSchedule(item.job.schedule)) ||
+					job.zone !== item.job?.zone
+				// Another task: the version read now is the one it runs, so it is not held as changed.
+				const newTask = job.task !== item.job?.task
+				if (moved || newTask)
+					await store.update(item.id, (state) =>
+						state
+							? {
+									...state,
+									...(moved
+										? { nextDue: nextOccurrence(job.schedule, new Date(), job.zone).toISOString() }
+										: {}),
+									...(newTask ? { taskVersion } : {}),
+								}
+							: null,
+					)
+				await reload(item.team)
 			}, true)
 		},
 		remove: async (key) => {

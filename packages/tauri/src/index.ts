@@ -17,6 +17,7 @@ import {
 	DEFAULT_SETTINGS,
 	type ModelHost,
 	type NgomateHost,
+	type OwnTaskStore,
 	type PickedDocument,
 	type Settings,
 	type TeamHost,
@@ -72,6 +73,12 @@ const jobs: JobStore = {
 		)
 	},
 	write: (id, text) => call('store_write', { area: 'jobs', name: id, text }),
+	replace: (id, text) =>
+		oneAtATime(id, async () => {
+			if ((await call<string | null>('store_read', { area: 'jobs', name: id })) === null)
+				throw new Error('This job is not there any more.')
+			await call('store_write', { area: 'jobs', name: id, text })
+		}),
 	update: (id, change) =>
 		oneAtATime(id, async () => {
 			// A job deleted meanwhile keeps no state, or a new job of the same name would take it over.
@@ -191,12 +198,41 @@ export function programTransport(id: string, command: string, args: string[]): T
 	return transport
 }
 
+/** Far more than any task needs; a bigger file in the tasks folder is not read. */
+const TASK_FILE_MAX_BYTES = 200_000
+
+/** Tasks the person made, as Markdown files beside their notes. */
+const ownTasks: OwnTaskStore = {
+	async list() {
+		const entries = await call<Entry[]>('store_list', { area: 'tasks' })
+		// One file that cannot be read, or is far too long for a task, is listed as broken rather than
+		// hiding all the others.
+		const read = await Promise.all(
+			entries.map(async (entry) => ({
+				id: entry.name,
+				text:
+					entry.bytes > TASK_FILE_MAX_BYTES
+						? ''
+						: await call<string | null>('store_read', { area: 'tasks', name: entry.name }).catch(
+								() => '',
+							),
+			})),
+		)
+		return read.flatMap((entry) =>
+			entry.text === null ? [] : [{ id: entry.id, text: entry.text }],
+		)
+	},
+	write: (id, text) => call('store_write', { area: 'tasks', name: id, text }),
+	remove: (id) => call('store_remove', { area: 'tasks', name: id }),
+}
+
 /** Everything the interface needs from a Tauri window with the plugin installed. */
 export function createTauriHost(options: { appName: string; tasks: TaskFile[] }): NgomateHost {
 	return {
 		...options,
 		memory,
 		jobs,
+		ownTasks,
 		models,
 		team,
 		async loadSettings() {

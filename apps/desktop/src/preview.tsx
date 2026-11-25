@@ -77,6 +77,47 @@ const SAMPLE_JOB = {
 	},
 }
 
+/** A made-up task of the person's own, as its file. */
+const OWN_TASK = [
+	'---',
+	'id: funder-page-check',
+	'title: Funder page check',
+	'description: Says what changed on a funder page since last time.',
+	'ask: The funder and its web page',
+	'tools: none',
+	'---',
+	'Compare the page the person gives you with what they say it said before, and list what changed.',
+	'',
+].join('\n')
+
+/** A chat where a job is half made in words, with its card above it. */
+const MAKING = {
+	id: 'making-volunteers',
+	title: 'Volunteer rota reminder',
+	updatedAt: new Date(Date.now() - 600_000).toISOString(),
+	messages: [
+		{
+			role: 'user' as const,
+			content: 'Every Friday afternoon, draft next week’s volunteer rota from my notes.',
+		},
+		{
+			role: 'assistant' as const,
+			content: 'I have drafted the job above. Which notes should it draft the rota from?',
+		},
+	],
+	notices: {},
+	draft: {
+		kind: 'job' as const,
+		task: {},
+		job: {
+			title: 'Volunteer rota',
+			task: 'write-update-or-report',
+			schedule: 'weekly fri 15:00',
+			note: 'Rota {date}',
+		},
+	},
+}
+
 export function start(root: Root) {
 	document.title = 'NGOmate preview'
 	const host = {
@@ -91,7 +132,10 @@ export function start(root: Root) {
 				earlier('calls', 'Open funding calls for school water', 30),
 				earlier('job-funding-this-week-run-2', 'Funding this week', 1),
 				earlier('job-funding-this-week-run-1', 'Funding this week', 8),
+				MAKING,
 			],
+			ownTasks: { 'funder-page-check': OWN_TASK },
+			settings: { drafts: { [MAKING.id]: 'job' } },
 			jobs: { 'funding-this-week': SAMPLE_JOB },
 			teams: ['Riverside Water Group', 'Coalition for Clean Rivers'],
 			models: fakeModels(),

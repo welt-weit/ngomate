@@ -16,8 +16,11 @@ import {
 } from 'react'
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-	/** `nav` is an item in a list of places, `quiet` a minor action beside something else. */
-	variant?: 'default' | 'primary' | 'quiet' | 'nav'
+	/**
+	 * `nav` is an item in a list of places, `quiet` a minor action beside something else, `danger` one
+	 * that deletes or cannot be undone.
+	 */
+	variant?: 'default' | 'primary' | 'quiet' | 'nav' | 'danger'
 	/** For `nav`: this is where the person is. */
 	active?: boolean
 }
@@ -26,10 +29,23 @@ export type TextAreaProps = TextareaHTMLAttributes<HTMLTextAreaElement>
 export type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & { children: ReactNode }
 export type CheckboxProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>
 export type ChipProps = HTMLAttributes<HTMLSpanElement>
+/**
+ * Every dialog has one frame: the title and × at the top, what it holds (scrolling when long), what
+ * went wrong just above the buttons, and the buttons at the bottom, always in view.
+ */
 export type DialogProps = {
 	title: string
 	onClose: () => void
 	children: ReactNode
+	/**
+	 * The buttons, right-aligned: Cancel (or Close), then the main one at the far right, named for what
+	 * it does. A button that sends a form names it with `form`.
+	 */
+	actions?: ReactNode
+	/** Another way to go, such as "Fill it in myself": at the bottom left, apart from the main buttons. */
+	alternative?: ReactNode
+	/** Why the main action did not go through, read aloud. */
+	problem?: string | null
 }
 
 export type PopoverProps = {
@@ -61,11 +77,17 @@ export type NgomatePrimitives = {
 	Popover: ComponentType<PopoverProps>
 }
 
-const VARIANT_CLASS = { default: '', primary: 'ngm-primary', quiet: 'ngm-quiet', nav: 'ngm-nav' }
+const VARIANT_CLASS = {
+	default: '',
+	primary: 'ngm-primary',
+	quiet: 'ngm-quiet',
+	nav: 'ngm-nav',
+	danger: 'ngm-danger',
+}
 
 const classes = (...names: (string | undefined | false)[]) => names.filter(Boolean).join(' ')
 
-function DefaultDialog({ title, onClose, children }: DialogProps) {
+function DefaultDialog({ title, onClose, children, actions, alternative, problem }: DialogProps) {
 	const ref = useRef<HTMLDialogElement>(null)
 	// Layout effect, so its cleanup runs while the dialog is still on the page: closing it, not removing
 	// it, is what gives focus back to the button that opened it.
@@ -73,12 +95,20 @@ function DefaultDialog({ title, onClose, children }: DialogProps) {
 		// The browser's own modal keeps focus inside and closes on Escape.
 		const dialog = ref.current
 		if (!dialog) return
+		// The first field to fill in, if the dialog names one. Again on the next frame: WebKit moves focus
+		// to the first button of a modal after showModal returns, over a focus set at once.
+		const focusFirst = () => dialog.querySelector<HTMLElement>('[data-autofocus]')?.focus()
 		if (typeof dialog.showModal === 'function') {
 			if (!dialog.open) dialog.showModal()
-			dialog.querySelector<HTMLElement>('[data-autofocus]')?.focus()
-			return () => dialog.close()
+			focusFirst()
+			const frame = requestAnimationFrame(focusFirst)
+			return () => {
+				cancelAnimationFrame(frame)
+				dialog.close()
+			}
 		}
 		dialog.setAttribute('open', '')
+		focusFirst()
 	}, [])
 	return (
 		<dialog
@@ -101,7 +131,18 @@ function DefaultDialog({ title, onClose, children }: DialogProps) {
 					×
 				</button>
 			</div>
-			{children}
+			<div className="ngm-dialog-body">{children}</div>
+			{problem && (
+				<p className="ngm-error ngm-dialog-problem" role="alert">
+					{problem}
+				</p>
+			)}
+			{(actions || alternative) && (
+				<div className="ngm-dialog-actions">
+					{alternative && <div className="ngm-dialog-alternative">{alternative}</div>}
+					{actions}
+				</div>
+			)}
 		</dialog>
 	)
 }

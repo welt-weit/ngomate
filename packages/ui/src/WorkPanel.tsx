@@ -1,5 +1,6 @@
 import { type JobOutcome, type JobRun, describeChange, describeSchedule } from '@ngomate/core'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { RowActions } from './ActionMenu.js'
 import { startConversationDrag } from './TabBar.js'
 import { ICONS, Icon } from './icons.js'
 import { usePrimitives } from './primitives.js'
@@ -17,7 +18,12 @@ export type WorkTask = {
 	text: string
 	title?: string
 	run: () => void
+	/** Change, copy, delete and the like, beside the task. */
+	actions?: { label: string; onClick: () => void; ai?: boolean }[]
 }
+
+/** A chat making a task or job that is not saved yet, listed with them so it can be found again. */
+export type WorkDraft = { id: string; title: string; kind: 'task' | 'job' }
 
 type Conversation = { id: string; title: string; updatedAt: string }
 
@@ -32,6 +38,10 @@ export type WorkJobs = {
 	onNew: () => void
 	onRun: (id: string) => void
 	onPause: (id: string, paused: boolean) => void
+	/** Changes the job in the form. */
+	onEdit: (id: string) => void
+	/** Changes the job in words, in the chat it was made in. */
+	onChangeInWords: (id: string) => void
 	onDelete: (id: string) => void
 	onOpenRun: (id: string, conversationId: string) => void
 	/** A held run whose team task changed: the person reads the task before it runs again. */
@@ -157,6 +167,8 @@ export function WorkPanel({
 	onOpenNotes,
 	findRequest,
 	jobs,
+	drafts = [],
+	onNewTask,
 }: {
 	conversations: Conversation[]
 	shownId: string | null
@@ -179,6 +191,9 @@ export function WorkPanel({
 	findRequest: number
 	/** Left out when the host keeps no jobs. */
 	jobs?: WorkJobs
+	drafts?: WorkDraft[]
+	/** Left out when the host keeps no tasks of the person's own. */
+	onNewTask?: () => void
 }) {
 	const { Button, Input } = usePrimitives()
 	const [query, setQuery] = useState('')
@@ -249,46 +264,65 @@ export function WorkPanel({
 				>
 					{conversation.title}
 				</Button>
-				<div className="ngm-side-actions">
-					<Button
-						variant="quiet"
-						className="ngm-icon-button"
-						aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${conversation.title}`}
-						title={isPinned ? 'Unpin' : 'Pin'}
-						aria-pressed={isPinned}
-						onClick={() => onTogglePin(conversation.id)}
-					>
-						<Icon path={ICONS.pin} size={14} />
-					</Button>
-					<Button
-						variant="quiet"
-						className="ngm-icon-button"
-						aria-label={`Open ${conversation.title} side by side`}
-						title="Open side by side"
-						disabled={!canSplit}
-						onClick={() => onOpen(conversation.id, true)}
-					>
-						<Icon path={ICONS.split} size={14} />
-					</Button>
-					<Button
-						variant="quiet"
-						className="ngm-icon-button"
-						aria-label={`Delete ${conversation.title}`}
-						title="Delete"
-						onClick={() => onDelete(conversation.id)}
-					>
-						<Icon path={ICONS.close} size={14} />
-					</Button>
-				</div>
+				<RowActions
+					label={`Actions for ${conversation.title}`}
+					items={[
+						{ label: isPinned ? 'Unpin' : 'Pin', onSelect: () => onTogglePin(conversation.id) },
+						{
+							label: 'Open side by side',
+							disabled: !canSplit,
+							onSelect: () => onOpen(conversation.id, true),
+						},
+						{ label: 'Delete', onSelect: () => onDelete(conversation.id) },
+					]}
+				/>
 			</div>
 		)
 	}
 
-	const taskRow = (task: WorkTask) => (
-		<Button variant="nav" key={task.key} title={task.title} onClick={task.run}>
-			{task.label}
-		</Button>
-	)
+	const taskRow = (task: WorkTask) =>
+		task.actions?.length ? (
+			<div className="ngm-side-item" key={task.key}>
+				<Button variant="nav" title={task.title} onClick={task.run}>
+					{task.label}
+				</Button>
+				<RowActions
+					label={`Actions for ${task.text}`}
+					items={task.actions.map((action) => ({
+						label: action.label,
+						onSelect: action.onClick,
+						ai: action.ai,
+					}))}
+				/>
+			</div>
+		) : (
+			<Button variant="nav" key={task.key} title={task.title} onClick={task.run}>
+				{task.label}
+			</Button>
+		)
+
+	/** Chats making something not saved yet, at the top of its list, so they are not lost. */
+	const draftRows = (kind: WorkDraft['kind']) => {
+		const mine = drafts.filter((draft) => draft.kind === kind)
+		return mine.length
+			? section(
+					'Being made',
+					mine.map((draft) => (
+						<Button
+							variant="nav"
+							key={draft.id}
+							active={draft.id === shownId}
+							title="Open the chat where it is being made"
+							onClick={() => onOpen(draft.id)}
+						>
+							{draft.title}
+							<span className="ngm-muted"> · draft</span>
+						</Button>
+					)),
+					`drafts-${kind}`,
+				)
+			: null
+	}
 
 	const section = (title: string, children: ReactNode, key = title) => (
 		<section className="ngm-side-section" key={key}>
@@ -350,47 +384,51 @@ export function WorkPanel({
 						<strong>{title}</strong>
 						{item.team && <span className="ngm-muted"> · team</span>}
 					</Button>
-					<div className="ngm-side-actions">
-						{/* A paused job is resumed first, so the two play buttons are never side by side. */}
-						{job && !state?.paused && (
-							<Button
-								variant="quiet"
-								className="ngm-icon-button"
-								aria-label={`Run ${name} now`}
-								title={
-									jobs.running !== null
-										? 'Another job is running'
-										: claimedBy
-											? `Running on ${claimedBy}'s computer`
-											: 'Run now'
-								}
-								disabled={jobs.running !== null || claimedBy !== null}
-								onClick={() => jobs.onRun(item.key)}
-							>
-								<Icon path={ICONS.play} size={14} />
-							</Button>
-						)}
-						{job && state && (
-							<Button
-								variant="quiet"
-								className="ngm-icon-button"
-								aria-label={`${state.paused ? 'Resume' : 'Pause'} ${name}`}
-								title={state.paused ? 'Resume' : 'Pause'}
-								onClick={() => jobs.onPause(item.key, !state.paused)}
-							>
-								<Icon path={state.paused ? ICONS.play : ICONS.pause} size={14} />
-							</Button>
-						)}
-						<Button
-							variant="quiet"
-							className="ngm-icon-button"
-							aria-label={`Delete ${name}`}
-							title={item.team ? 'Delete it for the whole team' : 'Delete'}
-							onClick={() => jobs.onDelete(item.key)}
-						>
-							<Icon path={ICONS.close} size={14} />
-						</Button>
-					</div>
+					<RowActions
+						label={`Actions for ${name}`}
+						items={[
+							// The assistant's route first: in NGOmate it is always the preferred one.
+							...(job
+								? [
+										{
+											label: 'Change in chat',
+											ai: true,
+											onSelect: () => jobs.onChangeInWords(item.key),
+										},
+									]
+								: []),
+							...(job && !state?.paused
+								? [
+										{
+											// Why it cannot run now is said in its place.
+											label:
+												jobs.running !== null && jobs.running !== item.key
+													? 'Run now (another job is running)'
+													: jobs.running === item.key
+														? 'Running now'
+														: claimedBy
+															? `Running on ${claimedBy}'s computer`
+															: 'Run now',
+											disabled: jobs.running !== null || claimedBy !== null,
+											onSelect: () => jobs.onRun(item.key),
+										},
+									]
+								: []),
+							...(job && state
+								? [
+										{
+											label: state.paused ? 'Resume' : 'Pause',
+											onSelect: () => jobs.onPause(item.key, !state.paused),
+										},
+									]
+								: []),
+							...(job ? [{ label: 'Edit', onSelect: () => jobs.onEdit(item.key) }] : []),
+							{
+								label: item.team ? 'Delete for the whole team…' : 'Delete',
+								onSelect: () => jobs.onDelete(item.key),
+							},
+						]}
+					/>
 				</div>
 				<p className="ngm-side-note">{status}</p>
 				{held?.reason && <p className="ngm-side-note">{held.reason}</p>}
@@ -524,9 +562,15 @@ export function WorkPanel({
 			<p className="ngm-work-empty">Your conversations will be listed here.</p>
 		)
 	} else if (group === 'tasks') {
-		list = taskGroups
-			.filter((taskGroup) => taskGroup.tasks.length)
-			.map((taskGroup) => section(taskGroup.title, taskGroup.tasks.map(taskRow)))
+		list = (
+			<>
+				{onNewTask && <Button onClick={onNewTask}>New task…</Button>}
+				{draftRows('task')}
+				{taskGroups
+					.filter((taskGroup) => taskGroup.tasks.length)
+					.map((taskGroup) => section(taskGroup.title, taskGroup.tasks.map(taskRow)))}
+			</>
+		)
 	} else if (!jobs) {
 		list = (
 			<p className="ngm-work-empty">
@@ -538,6 +582,7 @@ export function WorkPanel({
 		list = (
 			<>
 				<Button onClick={jobs.onNew}>New job…</Button>
+				{draftRows('job')}
 				{jobs.problem && (
 					<p className="ngm-error" role="alert">
 						{jobs.problem}

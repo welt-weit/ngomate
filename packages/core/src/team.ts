@@ -193,6 +193,28 @@ export function teamLimitProblem(
 	return null
 }
 
+/**
+ * Saves a team task over the version it was read at (null for a new one): someone else's change
+ * meanwhile is refused with `TeamConflict`. Tasks count together with team jobs toward the tasks limit.
+ */
+export async function saveTeamTask(
+	store: TeamStore,
+	limits: TeamLimits,
+	name: string,
+	text: string,
+	expected: string | null,
+): Promise<void> {
+	// A connector keeps no team jobs, and refuses to list them.
+	const [tasks, jobs] = await Promise.all([
+		store.list('tasks'),
+		store.list('jobs').catch(() => [] as TeamEntry[]),
+	])
+	const pooled = [...tasks, ...jobs.map((job) => ({ ...job, name: `job:${job.name}` }))]
+	const problem = teamLimitProblem(limits, 'tasks', pooled, name, text)
+	if (problem) throw new Error(problem)
+	await store.write('tasks', name, text, expected)
+}
+
 /** Where the team's storage is. Never a password or key: an invite gets forwarded and kept in chats. */
 export type InviteStorage =
 	| { type: 'folder'; folderName: string }

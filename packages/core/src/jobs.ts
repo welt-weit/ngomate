@@ -128,6 +128,8 @@ export interface JobStore {
 	list(): Promise<{ id: string; text: string; state: JobState | null }[]>
 	/** Makes a job. A shared store refuses one someone else made under the same id meanwhile. */
 	write(id: string, text: string): Promise<void>
+	/** Writes a changed job file over the one there. Its state, and so its runs, stay. */
+	replace(id: string, text: string): Promise<void>
 	/**
 	 * Changes a job's state from the newest there is. A shared store reads it again and tries once more
 	 * when someone else changed it meanwhile. `change` returning null leaves it as it is. Returns the
@@ -660,6 +662,23 @@ export function createTeamJobStore(store: TeamStore, limits: () => TeamLimits): 
 				if (err instanceof TeamConflict)
 					throw new Error(
 						'Someone in the team has just made a job of that name. Give this one another name.',
+					)
+				throw err
+			}
+		},
+		async replace(id, text) {
+			const [tasks, jobs] = await Promise.all([store.list('tasks'), store.list('jobs')])
+			const pooled = [...tasks.map((task) => ({ ...task, name: `task:${task.name}` })), ...jobs]
+			const problem = teamLimitProblem(limits(), 'jobs', pooled, id, text)
+			if (problem) throw new Error(problem)
+			const current = await store.read('jobs', id)
+			if (!current) throw new Error('This job is not in the team any more.')
+			try {
+				await store.write('jobs', id, text, current.version)
+			} catch (err) {
+				if (err instanceof TeamConflict)
+					throw new Error(
+						'Someone in the team changed this job meanwhile. Open it again and redo the change.',
 					)
 				throw err
 			}

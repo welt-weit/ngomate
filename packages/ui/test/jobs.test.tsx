@@ -18,6 +18,19 @@ import { type ListedJob, droppedRuns } from '../src/useJobs.js'
 
 afterEach(cleanup)
 
+/** Opens a list item's "⋯" menu and picks one of its actions. */
+async function choose(scope: HTMLElement, item: string | RegExp, action: string | RegExp) {
+	await userEvent.click(
+		await within(scope).findByRole('button', {
+			name:
+				typeof item === 'string'
+					? `Actions for ${item}`
+					: new RegExp(`^Actions for ${item.source}`),
+		}),
+	)
+	await userEvent.click(await screen.findByRole('button', { name: action }))
+}
+
 const say = (content: string): ModelReply => ({
 	content,
 	toolCalls: [],
@@ -200,6 +213,7 @@ describe('the Jobs list', () => {
 		const work = await screen.findByRole('complementary', { name: 'Your work' })
 		await userEvent.click(within(work).getByRole('button', { name: 'Jobs' }))
 		await userEvent.click(within(work).getByRole('button', { name: 'New job…' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Fill it in myself' }))
 
 		await userEvent.selectOptions(screen.getByLabelText('Task'), 'draft-proposal-section')
 		await userEvent.type(screen.getByLabelText(/funder's question/), 'Made-up notes on a well.')
@@ -212,9 +226,7 @@ describe('the Jobs list', () => {
 		const [stored] = await (host.jobs?.list() ?? Promise.resolve([]))
 		expect(stored?.text).toMatch(/schedule: weekly mon 09:00\ndestination: note Draft/)
 
-		await userEvent.click(
-			within(section).getByRole('button', { name: 'Run Draft a proposal section now' }),
-		)
+		await choose(section, 'Draft a proposal section', 'Run now')
 		const result = await within(section).findByRole(
 			'button',
 			{ name: /· Done · new$/ },
@@ -243,11 +255,11 @@ describe('the Jobs list', () => {
 		const work = await screen.findByRole('complementary', { name: 'Your work' })
 		await userEvent.click(within(work).getByRole('button', { name: 'Jobs' }))
 		const section = await within(work).findByRole('region', { name: 'Funding' })
-		await userEvent.click(within(section).getByRole('button', { name: 'Pause Funding' }))
+		await choose(section, 'Funding', 'Pause')
 		expect(await within(section).findByText('Paused. Every day at 08:00.')).toBeTruthy()
-		await userEvent.click(within(section).getByRole('button', { name: 'Resume Funding' }))
+		await choose(section, 'Funding', 'Resume')
 		expect(await within(section).findByText(/^Every day at 08:00\. Next: /)).toBeTruthy()
-		await userEvent.click(within(section).getByRole('button', { name: 'Delete Funding' }))
+		await choose(section, 'Funding', 'Delete')
 		await waitFor(() => expect(within(work).queryByRole('region', { name: 'Funding' })).toBeNull())
 		expect(await host.jobs?.list()).toEqual([])
 	})
@@ -283,7 +295,7 @@ describe('a change a job asked for', () => {
 		const work = await screen.findByRole('complementary', { name: 'Your work' })
 		await userEvent.click(within(work).getByRole('button', { name: 'Jobs' }))
 		const section = await within(work).findByRole('region', { name: 'Contacts' })
-		await userEvent.click(within(section).getByRole('button', { name: 'Run Contacts now' }))
+		await choose(section, 'Contacts', 'Run now')
 		expect(
 			await within(section).findByText(
 				'Asked to change: add_contact (name: Fictional Water Fund)',
@@ -313,6 +325,7 @@ describe('a team job', () => {
 		const work = await screen.findByRole('complementary', { name: 'Your work' })
 		await userEvent.click(within(work).getByRole('button', { name: 'Jobs' }))
 		await userEvent.click(within(work).getByRole('button', { name: 'New job…' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Fill it in myself' }))
 		await userEvent.selectOptions(await screen.findByLabelText('For'), 'team')
 		await userEvent.selectOptions(screen.getByLabelText('Task'), 'draft-proposal-section')
 		await userEvent.type(screen.getByLabelText(/funder's question/), 'Made-up notes on a well.')
@@ -330,9 +343,7 @@ describe('a team job', () => {
 		const stored = await host.team?.store.read('jobs', 'draft-a-proposal-section')
 		expect(stored?.text).toMatch(/destination: team-note Weekly draft\nzone: /)
 
-		await userEvent.click(
-			within(section).getByRole('button', { name: 'Run Draft a proposal section (team) now' }),
-		)
+		await choose(section, 'Draft a proposal section (team)', 'Run now')
 		expect(
 			await within(section).findByRole('button', { name: /· Done · Amina$/ }, { timeout: 9000 }),
 		).toBeTruthy()
@@ -369,8 +380,11 @@ describe('a team job', () => {
 		await userEvent.click(within(work).getByRole('button', { name: 'Jobs' }))
 		const section = await within(work).findByRole('region', { name: 'Weekly (team)' })
 		expect(within(section).getByText("Running on Jonas's computer…")).toBeTruthy()
+		await userEvent.click(
+			within(section).getByRole('button', { name: 'Actions for Weekly (team)' }),
+		)
 		expect(
-			(within(section).getByRole('button', { name: 'Run Weekly (team) now' }) as HTMLButtonElement)
+			(screen.getByRole('button', { name: "Running on Jonas's computer" }) as HTMLButtonElement)
 				.disabled,
 		).toBe(true)
 		expect(await host.listConversations()).toHaveLength(0)
@@ -384,6 +398,7 @@ describe('a team on a synced folder', () => {
 		const work = await screen.findByRole('complementary', { name: 'Your work' })
 		await userEvent.click(within(work).getByRole('button', { name: 'Jobs' }))
 		await userEvent.click(within(work).getByRole('button', { name: 'New job…' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Fill it in myself' }))
 		await screen.findByLabelText('Task')
 		expect(screen.queryByLabelText('For')).toBeNull()
 		// A job for one person still writes to their own notes unless they choose the team's.
@@ -398,6 +413,7 @@ describe('the job form', () => {
 		const work = await screen.findByRole('complementary', { name: 'Your work' })
 		await userEvent.click(within(work).getByRole('button', { name: 'Jobs' }))
 		await userEvent.click(within(work).getByRole('button', { name: 'New job…' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Fill it in myself' }))
 		await userEvent.selectOptions(await screen.findByLabelText('Task'), 'draft-proposal-section')
 		await userEvent.type(screen.getByLabelText(/funder's question/), '   ')
 		await userEvent.click(screen.getByRole('button', { name: 'Make the job' }))

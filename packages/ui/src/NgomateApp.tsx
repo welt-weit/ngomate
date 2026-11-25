@@ -2,7 +2,13 @@ import {
 	DEFAULT_TEAM_LIMITS,
 	type PromptDefinition,
 	type TaskFile,
+	TeamConflict,
 	createTeamJobStore,
+	destinationNote,
+	isTimeZone,
+	jobId,
+	saveTeamTask,
+	serializeTaskFile,
 } from '@ngomate/core'
 import {
 	type CSSProperties,
@@ -14,15 +20,29 @@ import {
 	useRef,
 	useState,
 } from 'react'
+import { RowActions } from './ActionMenu.js'
 import { AddonsPanel } from './AddonsPanel.js'
-import { Chat, type ChatStart } from './Chat.js'
-import { JobDialog } from './JobDialog.js'
+import { Chat, type ChatMaking, type ChatStart } from './Chat.js'
+import { MakeChooser } from './DraftCard.js'
+import { JobDialog, noteNameProblem } from './JobDialog.js'
 import { ProfileMenu } from './ProfileMenu.js'
 import { SettingsPage, type SettingsSection } from './Settings.js'
 import { TabBar, startConversationDrag } from './TabBar.js'
+import { TaskDialog, type TaskForm } from './TaskDialog.js'
 import { TeamPanel } from './TeamPanel.js'
 import { UpdateNotice } from './UpdateNotice.js'
-import { type FoundText, WorkPanel, type WorkTask, matches } from './WorkPanel.js'
+import { type FoundText, type WorkDraft, WorkPanel, type WorkTask, matches } from './WorkPanel.js'
+import {
+	type Draft,
+	type JobDraft,
+	NEW_TASK,
+	type TaskDraft,
+	draftFromJob,
+	draftFromTask,
+	emptyDraft,
+	jobFromDraft,
+	taskFromDraft,
+} from './drafts.js'
 import { makeId, promptLabel } from './format.js'
 import { DEFAULT_SETTINGS, type MenuCommand, type NgomateHost, type Settings } from './host.js'
 import { ICONS, Icon } from './icons.js'
@@ -52,6 +72,7 @@ import {
 import { selectAllInConversation } from './select-all.js'
 import { useIdleUnload } from './useIdleUnload.js'
 import { useJobs } from './useJobs.js'
+import { OWN_TASK_PREFIX, isOwnTask, useOwnTasks } from './useOwnTasks.js'
 import { type TeamTask, useTeam } from './useTeam.js'
 
 /** The conversations, the notes, or the settings. */
@@ -376,6 +397,9 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	)
 
 	// A job keeps the model loaded while it runs, without counting as a conversation it would wait for.
+	const own = useOwnTasks(host)
+	// The built-in tasks and the person's own: what a chat or a job can run, beside the team's.
+	const allTasks = useMemo(() => [...host.tasks, ...own.tasks], [host.tasks, own.tasks])
 	// Set once the conversation list's own delete is defined, further down.
 	const removeRunRef = useRef<(id: string) => Promise<void>>(async () => {})
 	const teamConnectors = useMemo(
@@ -387,13 +411,13 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			settings
 				? {
 						chat: { ...deps, onBusyChange: idleBusy },
-						tasks: host.tasks,
+						tasks: allTasks,
 						teamTasks: team.tasks,
 						teamId: team.activeId ?? undefined,
 						teamConnectors,
 					}
 				: null,
-		[settings, deps, idleBusy, host, team.tasks, team.activeId, teamConnectors],
+		[settings, deps, idleBusy, allTasks, team.tasks, team.activeId, teamConnectors],
 	)
 	// A team shares jobs only on S3 or WebDAV, where a write over a changed file is refused at the
 	// storage itself: that is what lets one member's computer claim a run. A synced folder only refuses
@@ -423,7 +447,27 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			for (const id of ids) void removeRunRef.current(id).catch(() => {})
 		},
 	)
-	const [newJob, setNewJob] = useState(false)
+	// New task or New job: say it in words, or fill in the form.
+	const [chooser, setChooser] = useState<Draft['kind'] | null>(null)
+	// The two forms, filled in or empty, and who waits for what was saved in them.
+	type Saved = { key: string; title: string }
+	const [taskForm, setTaskForm] = useState<{
+		title: string
+		initial?: TaskDraft
+		forTeam?: boolean
+		editing?: string
+		editingVersion?: string | null
+		done?: (saved: Saved | null) => void
+	} | null>(null)
+	const [jobForm, setJobForm] = useState<{
+		initial?: JobDraft
+		editing?: string
+		done?: (saved: Saved | null) => void
+	} | null>(null)
+	const formSaved = useRef<Saved | null>(null)
+	// A task of the person's own about to be deleted, and a job that still runs it.
+	const [deleteTask, setDeleteTask] = useState<string | null>(null)
+	const [deleteProblem, setDeleteProblem] = useState<string | null>(null)
 	// A job held because its team task changed, waiting for the person to read the task.
 	const [readJobTask, setReadJobTask] = useState<string | null>(null)
 	// A team job about to be deleted for everyone, waiting for the person to confirm.
@@ -635,6 +679,16 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		})
 	const removeConversation = async (id: string) => {
 		await host.removeConversation(id)
+		// A draft made there goes with it, and nothing is changed in words there again.
+		patchSettings((current) => {
+			const { [id]: _gone, ...drafts } = current.drafts ?? {}
+			return {
+				drafts,
+				madeIn: Object.fromEntries(
+					Object.entries(current.madeIn ?? {}).filter(([, chat]) => chat !== id),
+				),
+			}
+		})
 		close(id)
 		if (settings.pinned?.includes(id)) togglePin(id)
 		await refreshConversations()
@@ -656,7 +710,312 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				.then((text) => startNew({ prompt: { definition: prompt, text } }))
 				.catch(() => setOpenPrompt(prompt))
 	}
+	// ---- Making tasks and jobs, by form or in words ----
+
+	const ownZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+	const everyTask = [...allTasks, ...team.tasks.map((item) => item.task)]
+	const taskTitle = (id: string) => everyTask.find((task) => task.id === id)?.title
+	const TEAM_TASK = 'team:'
+	/**
+	 * Where the chat an item was made in is remembered. A team's items carry the team, so two teams'
+	 * tasks or jobs of one name never share a chat.
+	 */
+	const madeInKey = (kind: Draft['kind'], key: string) =>
+		key.startsWith('team:') ? `${kind}:${team.activeId ?? ''}:${key}` : `${kind}:${key}`
+	const forgetMadeIn = (kind: Draft['kind'], key: string) =>
+		patchSettings((current) => {
+			const { [madeInKey(kind, key)]: _gone, ...madeIn } = current.madeIn ?? {}
+			return { madeIn }
+		})
+	const removeJob = (key: string) => {
+		forgetMadeIn('job', key)
+		return jobs.remove(key)
+	}
+
+	/** Saves a task from the form or a draft: the person's own, or the team's. */
+	const saveTask = async (
+		form: TaskForm,
+		forTeam: boolean,
+		editing?: string,
+		/** For a team task: its version when the change began, so a newer one is not overwritten. */
+		editingVersion?: string | null,
+	): Promise<Saved> => {
+		const toTeam = editing ? editing.startsWith(TEAM_TASK) : forTeam
+		if (toTeam) {
+			const store = team.store
+			if (!store) throw new Error('No team is open now, so the task cannot be saved for it.')
+			const existing = editing ? team.tasks.find((item) => item.task.id === editing) : undefined
+			if (editing && !existing)
+				throw new Error(
+					'This task is not in the open team any more. Open that team, or make it again as a new task.',
+				)
+			const name = existing
+				? existing.task.id.slice(TEAM_TASK.length)
+				: jobId(
+						form.title,
+						team.tasks.map((item) => item.task.id.slice(TEAM_TASK.length)),
+					)
+			const task = taskFromDraft(form, name)
+			try {
+				await saveTeamTask(
+					store,
+					team.file?.limits ?? DEFAULT_TEAM_LIMITS,
+					name,
+					serializeTaskFile(task),
+					editingVersion !== undefined ? editingVersion : (existing?.version ?? null),
+				)
+			} catch (err) {
+				if (err instanceof TeamConflict)
+					throw new Error(
+						existing
+							? 'Someone in the team changed this task meanwhile. Open it again and redo the change.'
+							: 'Someone in the team has just made a task of that name. Give this one another name.',
+					)
+				throw err
+			}
+			await team.refresh()
+			return { key: `${TEAM_TASK}${name}`, title: task.title }
+		}
+		// Read anew, broken files included: a new task never takes the name of a file already there.
+		const taken = await own.takenIds()
+		const id =
+			editing && isOwnTask(editing)
+				? editing.slice(OWN_TASK_PREFIX.length)
+				: jobId(form.title, taken)
+		// Deleted meanwhile, from the list: a change must not quietly make it again.
+		if (editing && !taken.includes(id)) throw new Error('This task is not there any more.')
+		await own.save(taskFromDraft(form, id))
+		return { key: `${OWN_TASK_PREFIX}${id}`, title: form.title }
+	}
+
+	/** Saves a job from a draft or the form: a new one, or a change to one there is. */
+	const saveJob = async (draft: JobDraft, taskId: string, editing?: string): Promise<Saved> => {
+		const item = editing ? jobs.list.find((each) => each.key === editing) : undefined
+		if (editing && !item) throw new Error('This job is not there any more.')
+		const forTeam = item ? item.team : Boolean(draft.forTeam) && jobs.teamAvailable
+		if (!draft.inputs?.trim()) throw new Error('Say what the task needs.')
+		jobTaskProblem(taskId, forTeam)
+		const job = jobFromDraft(
+			{ ...draft, forTeam },
+			{
+				taskId,
+				taken: jobs.list.filter((each) => each.team === forTeam).map((each) => each.id),
+				keepId: item?.id,
+				zone: item?.job?.zone ?? (isTimeZone(ownZone) ? ownZone : 'UTC'),
+				// A change keeps the team the job was made for, whichever team is open now.
+				teamId: item?.job?.team ?? team.activeId,
+				fromTeamTask: taskId.startsWith(TEAM_TASK),
+			},
+		)
+		const noteProblem = noteNameProblem(destinationNote(job.destination, new Date()))
+		if (noteProblem) throw new Error(noteProblem)
+		if (item) {
+			await jobs.edit(item.key, job, teamTaskVersion(taskId))
+			return { key: item.key, title: job.title }
+		}
+		await jobs.create(job, { team: forTeam, taskVersion: teamTaskVersion(taskId) })
+		return { key: `${forTeam ? 'team' : 'own'}:${job.id}`, title: job.title }
+	}
+
+	const teamTaskVersion = (taskId: string) =>
+		team.tasks.find((each) => each.task.id === taskId)?.version ?? undefined
+
+	/**
+	 * Throws when a job cannot run this task: one that is not there, or, for a team job, one of this
+	 * person's own, which the other members' computers do not have.
+	 */
+	const jobTaskProblem = (taskId: string, forTeam: boolean) => {
+		if (!everyTask.some((task) => task.id === taskId))
+			throw new Error('The task this job runs is not there. Pick another.')
+		if (forTeam && isOwnTask(taskId))
+			throw new Error(
+				"A job for the team cannot run one of your own tasks: the others' computers do not have it. Save the task for the team first.",
+			)
+	}
+
+	const completeTask = (draft: TaskDraft): TaskForm => ({
+		title: draft.title ?? '',
+		description: draft.description ?? '',
+		ask: draft.ask ?? '',
+		instructions: draft.instructions ?? '',
+		tools: draft.tools ?? 'none',
+	})
+
+	const making: ChatMaking | undefined =
+		jobs.available || own.available
+			? {
+					context: {
+						tasks: everyTask.map((task) => ({ id: task.id, title: task.title, ask: task.ask })),
+						teamNotes: Boolean(team.notes),
+						teamJobs: jobs.teamAvailable && Boolean(team.notes),
+					},
+					taskTitle,
+					save: async (draft, onStep) => {
+						if (draft.kind === 'task')
+							return saveTask(completeTask(draft.task), false, draft.editing, draft.editingVersion)
+						let taskId = draft.job.task ?? ''
+						if (taskId === NEW_TASK) {
+							// Kept in the draft at once, so trying the job again does not make the task twice.
+							taskId = (await saveTask(completeTask(draft.task), false)).key
+							await onStep({ ...draft, task: {}, job: { ...draft.job, task: taskId } })
+						}
+						return saveJob(draft.job, taskId, draft.editing)
+					},
+					openForm: (draft, onStep) =>
+						new Promise((resolve) => {
+							if (draft.kind === 'task')
+								setTaskForm({
+									title: draft.editing
+										? `Change ${taskTitle(draft.editing) ?? 'the task'}`
+										: 'New task',
+									initial: draft.task,
+									editing: draft.editing,
+									editingVersion: draft.editingVersion,
+									forTeam: draft.editing ? draft.editing.startsWith(TEAM_TASK) : undefined,
+									done: resolve,
+								})
+							else if (draft.job.task === NEW_TASK)
+								// The job's new task first, then the job that runs it.
+								setTaskForm({
+									title: 'The task for this job',
+									initial: draft.task,
+									done: (task) => {
+										if (!task) return resolve(null)
+										// Kept in the draft at once: cancelling the job form must not leave a second
+										// copy of the task to be made by Make it later.
+										const next = { ...draft, task: {}, job: { ...draft.job, task: task.key } }
+										void onStep(next).finally(() =>
+											setJobForm({ initial: next.job, editing: draft.editing, done: resolve }),
+										)
+									},
+								})
+							else setJobForm({ initial: draft.job, editing: draft.editing, done: resolve })
+						}),
+					draftOf: (kind, key) => {
+						if (kind === 'task') {
+							const task = everyTask.find((each) => each.id === key)
+							return task ? draftFromTask(task, { key, version: teamVersionOf(key) }) : undefined
+						}
+						const item = jobs.list.find((each) => each.key === key)
+						return item?.job ? draftFromJob(item.job, item.team, key) : undefined
+					},
+					open: (draft) =>
+						patchSettings(() => ({
+							workGroup: draft.kind === 'job' ? 'jobs' : 'tasks',
+							workCollapsed: false,
+						})),
+					titleOf: (draft) =>
+						!draft.saved
+							? undefined
+							: draft.kind === 'task'
+								? taskTitle(draft.saved)
+								: jobs.list.find((each) => each.key === draft.saved)?.job?.title,
+					onDraft: (conversationId, kind, saved) =>
+						patchSettings((current) => {
+							const { [conversationId]: was, ...rest } = current.drafts ?? {}
+							return {
+								drafts: kind ? { ...rest, [conversationId]: kind } : rest,
+								...(saved && was
+									? { madeIn: { ...current.madeIn, [madeInKey(was, saved)]: conversationId } }
+									: {}),
+							}
+						}),
+				}
+			: undefined
+
+	/** Opens a chat to make something: a new one, or the one it was made in when it is changed. */
+	const makeInChat = (begin: NonNullable<ChatStart['making']>, conversationId?: string) => {
+		const id = conversationId ?? makeId('chat')
+		setLayout((current) => showHere(current, id))
+		setStart({ id, begin: { making: begin } })
+	}
+	const changeInWords = (kind: Draft['kind'], key: string, draft: Draft, title: string) => {
+		const madeIn = settings.madeIn?.[madeInKey(kind, key)]
+		const kept = madeIn && conversations.some((conversation) => conversation.id === madeIn)
+		makeInChat({ draft, title: `Changing ${title}` }, kept ? madeIn : undefined)
+	}
+	/** A team task's version now, or undefined for a task of another kind. */
+	const teamVersionOf = (id: string) =>
+		id.startsWith(TEAM_TASK)
+			? (team.tasks.find((item) => item.task.id === id)?.version ?? null)
+			: undefined
+	const changeTaskInWords = (task: TaskFile) =>
+		changeInWords(
+			'task',
+			task.id,
+			draftFromTask(task, { key: task.id, version: teamVersionOf(task.id) }),
+			task.title,
+		)
+	const changeJobInWords = (key: string) => {
+		const item = jobs.list.find((each) => each.key === key)
+		if (item?.job) changeInWords('job', key, draftFromJob(item.job, item.team, key), item.job.title)
+	}
+
+	const copyTask = (task: TaskFile) =>
+		setTaskForm({
+			title: `Copy of ${task.title}`,
+			initial: { ...draftFromTask(task).task, title: `${task.title} (copy)` },
+		})
+	const editTask = (task: TaskFile) =>
+		setTaskForm({
+			title: `Change ${task.title}`,
+			initial: draftFromTask(task).task,
+			editing: task.id,
+			editingVersion: teamVersionOf(task.id),
+			forTeam: task.id.startsWith(TEAM_TASK),
+		})
+	const taskActions = (task: TaskFile, mine: boolean, ofTeam: boolean) => [
+		...(mine || ofTeam
+			? [
+					{
+						label: 'Change in chat',
+						ai: true,
+						onClick: () => changeTaskInWords(task),
+					},
+					{
+						label: 'Edit',
+						onClick: () => editTask(task),
+					},
+				]
+			: []),
+		...(own.available
+			? [
+					{
+						label: 'Copy and change',
+						onClick: () => copyTask(task),
+					},
+				]
+			: []),
+		...(mine
+			? [
+					{
+						label: 'Delete',
+						onClick: () => setDeleteTask(task.id),
+					},
+				]
+			: []),
+	]
+
+	const draftRows: WorkDraft[] = Object.entries(settings.drafts ?? {}).flatMap(([id, kind]) => {
+		const conversation = conversations.find((each) => each.id === id)
+		// Read from a settings file anyone can edit: only what this app writes is listed.
+		return conversation && (kind === 'task' || kind === 'job')
+			? [{ id, kind, title: conversation.title }]
+			: []
+	})
+
 	const taskGroups: { title: string; tasks: WorkTask[] }[] = [
+		{
+			title: 'Yours',
+			tasks: own.tasks.map((task) => ({
+				key: task.id,
+				label: task.title,
+				text: task.title,
+				title: task.description,
+				run: () => startNew({ task }),
+				actions: taskActions(task, true, false),
+			})),
+		},
 		{
 			title: 'Ready-made',
 			tasks: host.tasks.map((task: TaskFile) => ({
@@ -665,6 +1024,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				text: task.title,
 				title: task.description,
 				run: () => startNew({ task }),
+				actions: taskActions(task, false, false),
 			})),
 		},
 		{
@@ -675,6 +1035,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				text: item.task.title,
 				title: item.task.description,
 				run: () => runTeamTask(item),
+				actions: taskActions(item.task, false, Boolean(team.store)),
 			})),
 		},
 		...[...new Set(prompts.map((prompt) => prompt.source))].map((source) => ({
@@ -815,17 +1176,10 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 												<Button variant="nav" active={id === shown} onClick={() => show(id)}>
 													{titleOf(id)}
 												</Button>
-												<div className="ngm-side-actions">
-													<Button
-														variant="quiet"
-														className="ngm-icon-button"
-														aria-label={`Unpin ${titleOf(id)}`}
-														title="Unpin"
-														onClick={() => togglePin(id)}
-													>
-														<Icon path={ICONS.close} size={14} />
-													</Button>
-												</div>
+												<RowActions
+													label={`Actions for ${titleOf(id)}`}
+													items={[{ label: 'Unpin', onSelect: () => togglePin(id) }]}
+												/>
 											</div>
 										))}
 									</div>
@@ -928,6 +1282,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 										start={start?.id === id ? start.begin : null}
 										attachRequest={id === shown ? requests.attach : 0}
 										onStarted={clearStart}
+										making={making}
 									/>
 								)}
 							</div>
@@ -935,7 +1290,33 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 					})}
 				</div>
 				{checkTask && (
-					<Dialog title={checkTask.task.title} onClose={() => setCheckTask(null)}>
+					<Dialog
+						actions={
+							<>
+								<Button onClick={() => setCheckTask(null)}>Cancel</Button>
+								<Button
+									variant="primary"
+									onClick={() => {
+										if (checkTask.version) {
+											updateSettings({
+												...settings,
+												teamTasksSeen: {
+													...settings.teamTasksSeen,
+													[seenKey(checkTask)]: checkTask.version,
+												},
+											})
+										}
+										startNew({ task: checkTask.task })
+										setCheckTask(null)
+									}}
+								>
+									Run it
+								</Button>
+							</>
+						}
+						title={checkTask.task.title}
+						onClose={() => setCheckTask(null)}
+					>
 						<p>
 							{settings.teamTasksSeen?.[seenKey(checkTask)]
 								? 'Someone in your team changed this task since you last ran it.'
@@ -943,35 +1324,51 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 							Read what it tells the assistant to do before running it.
 						</p>
 						<pre className="ngm-pre">{checkTask.text}</pre>
-						<div className="ngm-row">
-							<Button
-								variant="primary"
-								onClick={() => {
-									if (checkTask.version) {
-										updateSettings({
-											...settings,
-											teamTasksSeen: {
-												...settings.teamTasksSeen,
-												[seenKey(checkTask)]: checkTask.version,
-											},
-										})
-									}
-									startNew({ task: checkTask.task })
-									setCheckTask(null)
-								}}
-							>
-								Run it
-							</Button>
-							<Button onClick={() => setCheckTask(null)}>Cancel</Button>
-						</div>
 					</Dialog>
 				)}
-				{newJob && (
+				{chooser && (
+					<MakeChooser
+						kind={chooser}
+						onWords={(text) => {
+							makeInChat({ draft: emptyDraft(chooser), text })
+							setChooser(null)
+						}}
+						onForm={() => {
+							if (chooser === 'task') setTaskForm({ title: 'New task' })
+							else setJobForm({})
+							setChooser(null)
+						}}
+						onClose={() => setChooser(null)}
+					/>
+				)}
+				{taskForm && (
+					<TaskDialog
+						title={taskForm.title}
+						initial={taskForm.initial}
+						canSaveForTeam={Boolean(team.store)}
+						forTeam={taskForm.forTeam}
+						onSave={async (form, forTeam) => {
+							formSaved.current = await saveTask(
+								form,
+								forTeam,
+								taskForm.editing,
+								taskForm.editingVersion,
+							)
+						}}
+						onClose={() => {
+							const saved = formSaved.current
+							formSaved.current = null
+							setTaskForm(null)
+							taskForm.done?.(saved)
+						}}
+					/>
+				)}
+				{jobForm && (
 					<JobDialog
 						tasks={[
-							...host.tasks.map((task) => ({ task, fromTeam: false, version: null })),
+							...allTasks.map((task) => ({ task, fromTeam: false, version: null })),
 							...team.tasks
-								.filter((item) => !host.tasks.some((task) => task.id === item.task.id))
+								.filter((item) => !allTasks.some((task) => task.id === item.task.id))
 								.map((item) => ({ task: item.task, fromTeam: true, version: item.version })),
 						]}
 						takenIds={{
@@ -981,21 +1378,134 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						teamId={team.activeId}
 						canWriteTeamNotes={Boolean(team.notes)}
 						canShareWithTeam={jobs.teamAvailable && Boolean(team.notes)}
-						onCreate={(job, options) =>
-							jobs.create(job, {
+						initial={jobForm.initial}
+						editing={Boolean(jobForm.editing)}
+						zone={jobs.list.find((item) => item.key === jobForm.editing)?.job?.zone}
+						onCreate={async (job, options) => {
+							const item = jobs.list.find((each) => each.key === jobForm.editing)
+							jobTaskProblem(job.task, item ? item.team : options.team)
+							if (jobForm.editing) {
+								if (!item?.job) throw new Error('This job is not there any more.')
+								// A change keeps the job's zone and, while it still uses a team, the team it was made
+								// for, whichever team is open now.
+								const usesTeam =
+									!item.team &&
+									(job.destination.kind === 'team-note' || job.task.startsWith(TEAM_TASK))
+								const { team: _open, ...rest } = job
+								const changed = {
+									...rest,
+									...(item.job.zone ? { zone: item.job.zone } : {}),
+									...(usesTeam && (item.job.team ?? job.team)
+										? { team: item.job.team ?? job.team }
+										: {}),
+								}
+								await jobs.edit(jobForm.editing, changed, teamTaskVersion(job.task))
+								formSaved.current = { key: jobForm.editing, title: job.title }
+								return
+							}
+							await jobs.create(job, {
 								team: options.team,
 								taskVersion: options.taskVersion ?? undefined,
 							})
-						}
-						onClose={() => setNewJob(false)}
+							formSaved.current = {
+								key: `${options.team ? 'team' : 'own'}:${job.id}`,
+								title: job.title,
+							}
+						}}
+						onClose={() => {
+							const saved = formSaved.current
+							formSaved.current = null
+							setJobForm(null)
+							jobForm.done?.(saved)
+						}}
 					/>
 				)}
+				{deleteTask &&
+					(() => {
+						const task = own.tasks.find((each) => each.id === deleteTask)
+						const users = jobs.list.filter((item) => item.job?.task === deleteTask)
+						return (
+							<Dialog
+								actions={
+									<>
+										<Button onClick={() => setDeleteTask(null)}>Cancel</Button>
+										{!users.length && (
+											<Button
+												variant="danger"
+												onClick={async () => {
+													try {
+														await own.remove(deleteTask.slice(OWN_TASK_PREFIX.length))
+														forgetMadeIn('task', deleteTask)
+														setDeleteTask(null)
+														setDeleteProblem(null)
+													} catch (err) {
+														setDeleteProblem(err instanceof Error ? err.message : String(err))
+													}
+												}}
+											>
+												Delete it
+											</Button>
+										)}
+									</>
+								}
+								title={`Delete ${task?.title ?? 'this task'}?`}
+								problem={deleteProblem}
+								onClose={() => {
+									setDeleteTask(null)
+									setDeleteProblem(null)
+								}}
+							>
+								{users.length ? (
+									<p>
+										{users.map((item) => item.job?.title).join(', ')}{' '}
+										{users.length === 1 ? 'runs' : 'run'} this task. Delete or change{' '}
+										{users.length === 1 ? 'that job' : 'those jobs'} first.
+									</p>
+								) : (
+									<p>
+										It is deleted from this computer and cannot be brought back. Chats that used it
+										stay.
+									</p>
+								)}
+							</Dialog>
+						)
+					})()}
 				{readJobTask &&
 					(() => {
 						const item = jobs.list.find((each) => each.key === readJobTask)
 						const teamTask = team.tasks.find((each) => each.task.id === item?.job?.task)
 						return (
-							<Dialog title={teamTask?.task.title ?? 'Task'} onClose={() => setReadJobTask(null)}>
+							<Dialog
+								actions={
+									<>
+										<Button onClick={() => setReadJobTask(null)}>Cancel</Button>
+										<Button
+											variant="primary"
+											disabled={!teamTask || !item}
+											onClick={async () => {
+												if (!teamTask || !item) return
+												// Read here, so it is not asked again when the task is run as a chat.
+												const version = teamTask.version
+												if (version) {
+													patchSettings((latest) => ({
+														teamTasksSeen: {
+															...latest.teamTasksSeen,
+															[seenKey(teamTask)]: version,
+														},
+													}))
+												}
+												// Run only once the new version is recorded, or it would be held again.
+												if (await jobs.acceptTask(item.key, version)) jobs.runNow(item.key)
+												setReadJobTask(null)
+											}}
+										>
+											Run the job with it
+										</Button>
+									</>
+								}
+								title={teamTask?.task.title ?? 'Task'}
+								onClose={() => setReadJobTask(null)}
+							>
 								<p>
 									Someone in your team changed the task{' '}
 									{item?.job ? `the job "${item.job.title}"` : 'this job'} runs. Read what it tells
@@ -1006,28 +1516,6 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 								) : (
 									<p>The task is not in this team any more.</p>
 								)}
-								<div className="ngm-row">
-									<Button
-										variant="primary"
-										disabled={!teamTask || !item}
-										onClick={async () => {
-											if (!teamTask || !item) return
-											// Read here, so it is not asked again when the task is run as a chat.
-											const version = teamTask.version
-											if (version) {
-												patchSettings((latest) => ({
-													teamTasksSeen: { ...latest.teamTasksSeen, [seenKey(teamTask)]: version },
-												}))
-											}
-											// Run only once the new version is recorded, or it would be held again.
-											if (await jobs.acceptTask(item.key, version)) jobs.runNow(item.key)
-											setReadJobTask(null)
-										}}
-									>
-										Run the job with it
-									</Button>
-									<Button onClick={() => setReadJobTask(null)}>Cancel</Button>
-								</div>
 							</Dialog>
 						)
 					})()}
@@ -1036,23 +1524,28 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						const item = jobs.list.find((each) => each.key === deleteJob)
 						const title = item?.job?.title ?? item?.id ?? 'this job'
 						return (
-							<Dialog title={`Delete ${title}?`} onClose={() => setDeleteJob(null)}>
+							<Dialog
+								actions={
+									<>
+										<Button onClick={() => setDeleteJob(null)}>Cancel</Button>
+										<Button
+											variant="danger"
+											onClick={() => {
+												void removeJob(deleteJob)
+												setDeleteJob(null)
+											}}
+										>
+											Delete it for the team
+										</Button>
+									</>
+								}
+								title={`Delete ${title}?`}
+								onClose={() => setDeleteJob(null)}
+							>
 								<p>
 									It is deleted for everyone in the team, with the list of its runs and the chats of
-									the runs this computer made. The notes it wrote stay.
+									the runs this computer made, and cannot be brought back. The notes it wrote stay.
 								</p>
-								<div className="ngm-row">
-									<Button
-										variant="primary"
-										onClick={() => {
-											void jobs.remove(deleteJob)
-											setDeleteJob(null)
-										}}
-									>
-										Delete it for the team
-									</Button>
-									<Button onClick={() => setDeleteJob(null)}>Cancel</Button>
-								</div>
 							</Dialog>
 						)
 					})()}
@@ -1074,6 +1567,8 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				findIn={findIn}
 				onOpenNotes={() => openPage('memory')}
 				findRequest={findRequest}
+				drafts={draftRows}
+				onNewTask={own.available ? () => setChooser('task') : undefined}
 				jobs={
 					jobs.available
 						? {
@@ -1081,13 +1576,19 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 								loaded: jobs.loaded,
 								running: jobs.running,
 								problem: jobs.problem,
-								onNew: () => setNewJob(true),
+								onNew: () => setChooser('job'),
+								onEdit: (key) => {
+									const item = jobs.list.find((each) => each.key === key)
+									if (item?.job)
+										setJobForm({ initial: draftFromJob(item.job, item.team).job, editing: key })
+								},
+								onChangeInWords: changeJobInWords,
 								onRun: jobs.runNow,
 								onPause: (key, paused) => void jobs.setPaused(key, paused),
 								onDelete: (key) =>
 									jobs.list.find((each) => each.key === key)?.team
 										? setDeleteJob(key)
-										: void jobs.remove(key),
+										: void removeJob(key),
 								onOpenRun: (key, conversationId) => {
 									show(conversationId)
 									void jobs.markSeen(key, conversationId)

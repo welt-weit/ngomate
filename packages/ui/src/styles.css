@@ -91,9 +91,26 @@
 .ngm-button {
 	padding: var(--ngm-space-1) var(--ngm-space-3);
 	cursor: pointer;
-	background: var(--ngm-bg);
-	border: 1px solid var(--ngm-line);
+	/* Filled, so a button never reads as a field to type in. */
+	background: var(--ngm-control, var(--ngm-panel));
+	border: 1px solid transparent;
 	border-radius: var(--ngm-radius);
+	transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+/* Lowest weight, so every kind of button below with a hover of its own keeps it. */
+.ngm-button:where(:hover:not(:disabled)) {
+	background: var(--ngm-control-hover, var(--ngm-line));
+}
+
+.ngm-button:where(:active:not(:disabled)) {
+	background: var(--ngm-line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ngm-button {
+		transition: none;
+	}
 }
 
 .ngm-button:disabled {
@@ -110,6 +127,11 @@
 
 .ngm-app a {
 	color: var(--ngm-link);
+	text-underline-offset: 2px;
+}
+
+.ngm-app a:hover {
+	text-decoration-thickness: 2px;
 }
 
 .ngm-button.ngm-primary {
@@ -118,11 +140,32 @@
 	border-color: var(--ngm-accent);
 }
 
+.ngm-button.ngm-danger {
+	color: var(--ngm-bg);
+	background: var(--ngm-error);
+	border-color: var(--ngm-error);
+}
+
+.ngm-button.ngm-danger:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--ngm-error) 85%, var(--ngm-text));
+	border-color: color-mix(in srgb, var(--ngm-error) 85%, var(--ngm-text));
+}
+
+.ngm-button.ngm-primary:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--ngm-accent) 85%, var(--ngm-text));
+	border-color: color-mix(in srgb, var(--ngm-accent) 85%, var(--ngm-text));
+}
+
 .ngm-button.ngm-quiet {
 	padding: 2px var(--ngm-space-2);
 	color: var(--ngm-muted);
 	background: none;
 	border: none;
+}
+
+.ngm-button.ngm-quiet:where(:hover:not(:disabled)) {
+	color: var(--ngm-text);
+	background: var(--ngm-control-hover, var(--ngm-line));
 }
 
 .ngm-input {
@@ -364,12 +407,15 @@ select.ngm-input {
 	border-radius: var(--ngm-radius);
 }
 
-.ngm-side-item:not(:hover):not(:focus-within) > .ngm-side-actions {
+/* Never while its menu is open: on the way from the ⋯ to the menu the pointer leaves the row, and the
+   menu would vanish under it. Marked by the menu itself: WebKit does not recheck :has() on hover. */
+.ngm-side-item:not(:hover):not(:focus-within) > .ngm-side-actions:not([data-open]) {
 	pointer-events: none;
 	opacity: 0;
 }
 
-.ngm-side-actions .ngm-button.ngm-quiet.ngm-icon-button:hover {
+.ngm-side-actions .ngm-button.ngm-quiet.ngm-icon-button:hover,
+.ngm-side-actions .ngm-button.ngm-quiet.ngm-icon-button[aria-expanded="true"] {
 	background: var(--ngm-panel);
 }
 
@@ -1003,6 +1049,43 @@ select.ngm-input {
 	border-radius: calc(var(--ngm-radius, 8px) * 1.5);
 }
 
+/* The frame: the head and the buttons stay put, what is between them scrolls. */
+.ngm-dialog[open] {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.ngm-dialog-body {
+	/* From its content's height, shrinking only when the window is too short. Not \`flex: 1\`: its zero
+	   basis collapses the body to nothing in WebKit when the dialog's height comes from its content. */
+	flex: 0 1 auto;
+	min-height: 0;
+	margin: 0 calc(-1 * var(--ngm-space-1));
+	padding: 0 var(--ngm-space-1);
+	overflow-y: auto;
+}
+
+.ngm-dialog-problem {
+	margin: var(--ngm-space-3) 0 0;
+}
+
+/* Right-aligned, the main action last; another way to go keeps to the left. */
+.ngm-dialog-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--ngm-space-2);
+	align-items: center;
+	justify-content: flex-end;
+	padding-top: var(--ngm-space-4);
+}
+
+.ngm-dialog-alternative {
+	display: flex;
+	gap: var(--ngm-space-2);
+	margin-right: auto;
+}
+
 .ngm-dialog::backdrop {
 	background: rgb(0 0 0 / 45%);
 }
@@ -1163,4 +1246,113 @@ select.ngm-input {
 
 .ngm-side-scroll:has(.ngm-places) {
 	gap: var(--ngm-space-3);
+}
+
+/*
+ * The task or job a chat is making, pinned above it with an accent edge, so it reads as the thing the
+ * conversation below is shaping.
+ */
+.ngm-draft-card {
+	display: flex;
+	flex-direction: column;
+	flex-shrink: 0;
+	gap: var(--ngm-space-2);
+	max-height: 45%;
+	margin: var(--ngm-space-3) var(--ngm-space-5) 0;
+	padding: var(--ngm-space-3) var(--ngm-space-4);
+	overflow-y: auto;
+	border: 1px solid var(--ngm-line);
+	border-left: 3px solid var(--ngm-accent);
+	border-radius: var(--ngm-radius);
+	background: var(--ngm-panel);
+}
+
+.ngm-draft-card p {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.ngm-draft-head {
+	color: var(--ngm-muted);
+	font-size: 13px;
+}
+
+.ngm-draft-head strong {
+	color: var(--ngm-accent);
+}
+
+.ngm-draft-fields {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: var(--ngm-space-1) var(--ngm-space-3);
+	margin: 0;
+	font-size: 13px;
+}
+
+.ngm-draft-fields > div {
+	display: contents;
+}
+
+.ngm-draft-fields dt {
+	color: var(--ngm-muted);
+}
+
+.ngm-draft-fields dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.ngm-draft-card details {
+	font-size: 13px;
+}
+
+.ngm-pre-wrap {
+	white-space: pre-wrap;
+}
+
+/* The card's own buttons stay in reach when what it shows is longer than the card. */
+.ngm-draft-card > .ngm-row:last-child {
+	position: sticky;
+	bottom: calc(-1 * var(--ngm-space-3));
+	padding: var(--ngm-space-2) 0 var(--ngm-space-3);
+	margin-bottom: calc(-1 * var(--ngm-space-3));
+	background: var(--ngm-panel);
+}
+
+.ngm-draft-line {
+	display: block;
+	overflow-wrap: anywhere;
+}
+
+/* The assistant's route: the spark before the words, on buttons and in menus alike. */
+.ngm-button.ngm-ai,
+.ngm-popover-panel > .ngm-button {
+	display: inline-flex;
+	gap: var(--ngm-space-1);
+	align-items: center;
+}
+
+.ngm-button.ngm-ai svg,
+.ngm-popover-panel > .ngm-button svg {
+	flex: 0 0 auto;
+	color: var(--ngm-accent);
+}
+
+.ngm-button.ngm-primary.ngm-ai svg {
+	color: inherit;
+}
+
+/* An example in an empty field reads as an example, never as something already typed. */
+.ngm-app ::placeholder {
+	color: var(--ngm-muted);
+	opacity: 0.8;
+}
+
+/* A main button that cannot be used yet turns grey, so it is not mistaken for one that can. */
+.ngm-button.ngm-primary:disabled,
+.ngm-button.ngm-danger:disabled {
+	color: var(--ngm-muted);
+	background: var(--ngm-control, var(--ngm-panel));
+	border-color: transparent;
+	opacity: 1;
 }

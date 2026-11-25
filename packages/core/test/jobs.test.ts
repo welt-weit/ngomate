@@ -21,7 +21,14 @@ import {
 	parseSchedule,
 	serializeJobFile,
 } from '../src/jobs.js'
-import { DEFAULT_TEAM_LIMITS, type TeamArea, TeamConflict, type TeamStore } from '../src/team.js'
+import { parseTaskFile, serializeTaskFile } from '../src/tasks.js'
+import {
+	DEFAULT_TEAM_LIMITS,
+	type TeamArea,
+	TeamConflict,
+	type TeamStore,
+	saveTeamTask,
+} from '../src/team.js'
 
 const JOB: JobFile = {
 	id: 'funding',
@@ -469,5 +476,53 @@ describe('round-two fixes', () => {
 		expect(jobId('Größe', [])).toBe('grosse')
 		expect(jobId('Łódź report', [])).toBe('lodz-report')
 		expect(jobId('funding', ['Funding'])).toBe('funding-2')
+	})
+})
+
+describe('a task saved for the team', () => {
+	const TASK = {
+		id: 'funder-check',
+		title: 'Funder page check',
+		description: 'Says what changed.',
+		ask: 'The funder',
+		tools: 'none' as const,
+		instructions: 'List what changed.',
+	}
+
+	it('counts with team jobs toward the tasks limit', async () => {
+		const { store } = memoryTeamStore()
+		await store.write('jobs', 'big', 'x'.repeat(900), null)
+		const limits = { ...DEFAULT_TEAM_LIMITS, tasksBytes: 1000 }
+		await expect(
+			saveTeamTask(store, limits, 'funder-check', serializeTaskFile(TASK), null),
+		).rejects.toThrow('Team tasks is full')
+	})
+
+	it('saves on a connector, which keeps no team jobs', async () => {
+		const { store, files } = memoryTeamStore()
+		const connector: TeamStore = {
+			...store,
+			list: async (area) => {
+				if (area === 'jobs') throw new Error('A connector does not keep team jobs.')
+				return store.list(area)
+			},
+		}
+		await saveTeamTask(
+			connector,
+			DEFAULT_TEAM_LIMITS,
+			'funder-check',
+			serializeTaskFile(TASK),
+			null,
+		)
+		expect(files.has('tasks/funder-check')).toBe(true)
+	})
+
+	it('is never written as a file that would not read back', () => {
+		expect(() => serializeTaskFile({ ...TASK, ask: '  ' })).toThrow('needs ask')
+		expect(() => serializeTaskFile({ ...TASK, tools: ['all'] })).toThrow("tool's name")
+		const named = { ...TASK, tools: ['search', 'fetch'] }
+		expect(parseTaskFile(serializeTaskFile(named))).toEqual(named)
+		const fenced = { ...TASK, instructions: 'First.\n---\nThen this.' }
+		expect(parseTaskFile(serializeTaskFile(fenced))).toEqual(fenced)
 	})
 })

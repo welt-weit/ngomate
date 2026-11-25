@@ -4,7 +4,7 @@ import {
 	isDestructiveTool,
 	isKnowledgeTool,
 } from '@ngomate/core'
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { makeId } from './format.js'
 import type { Addon, AddonConnection, NgomateHost, Settings } from './host.js'
 import { usePrimitives } from './primitives.js'
@@ -211,7 +211,25 @@ function ConnectedAddon({ addon, host, settings, onChange }: PanelProps & { addo
 			</div>
 
 			{open && (
-				<Dialog title={addon.name} onClose={() => setOpen(false)}>
+				<Dialog
+					title={addon.name}
+					onClose={() => setOpen(false)}
+					alternative={
+						<Button
+							variant="danger"
+							onClick={async () => {
+								await host.deleteSecret(`addon:${addon.id}`)
+								onChange({
+									...settings,
+									addons: settings.addons.filter((other) => other.id !== addon.id),
+								})
+							}}
+						>
+							Remove {addon.name}
+						</Button>
+					}
+					actions={<Button onClick={() => setOpen(false)}>Close</Button>}
+				>
 					<div className="ngm-addon-details">
 						<label className="ngm-inline">
 							<Checkbox
@@ -311,19 +329,9 @@ function ConnectedAddon({ addon, host, settings, onChange }: PanelProps & { addo
 								</Button>
 							</form>
 						)}
-						<div>
-							<Button
-								onClick={async () => {
-									await host.deleteSecret(`addon:${addon.id}`)
-									onChange({
-										...settings,
-										addons: settings.addons.filter((other) => other.id !== addon.id),
-									})
-								}}
-							>
-								Remove {addon.name}
-							</Button>
-						</div>
+						<p className="ngm-muted">
+							Removing it deletes its token from this computer. To use it again, connect it again.
+						</p>
 					</div>
 				</Dialog>
 			)}
@@ -337,6 +345,8 @@ type Draft =
 	| { kind: 'own'; name?: string; url?: string }
 
 function ConnectForm({
+	title,
+	onClose,
 	draft,
 	host,
 	settings,
@@ -344,11 +354,14 @@ function ConnectForm({
 	onDone,
 	onBusy,
 }: PanelProps & {
+	title: string
+	onClose: () => void
 	draft: Draft
 	onDone: () => void
 	onBusy: (busy: boolean) => void
 }) {
-	const { Button, Input, Select } = usePrimitives()
+	const { Button, Input, Select, Dialog } = usePrimitives()
+	const formId = useId()
 	const [ownKind, setOwnKind] = useState<'http' | 'command'>('http')
 	const [name, setName] = useState(draft.kind === 'own' ? (draft.name ?? '') : '')
 	const [url, setUrl] = useState(draft.kind === 'own' ? (draft.url ?? '') : '')
@@ -395,73 +408,85 @@ function ConnectForm({
 	}
 
 	return (
-		<form className="ngm-form" onSubmit={connect}>
-			{!suggested && (
+		<Dialog
+			title={title}
+			onClose={onClose}
+			problem={problem}
+			actions={
 				<>
-					<label>
-						What should it be called?
-						<Input value={name} onChange={(event) => setName(event.target.value)} required />
-					</label>
-					<label>
-						Where does it run?
-						<Select
-							value={ownKind}
-							onChange={(event) => setOwnKind(event.target.value as 'http' | 'command')}
-						>
-							<option value="http">A service on the web</option>
-							<option value="command">A program on this computer</option>
-						</Select>
-					</label>
+					<Button onClick={onDone} disabled={connecting}>
+						Cancel
+					</Button>
+					<Button type="submit" form={formId} variant="primary" disabled={connecting}>
+						{connecting ? 'Connecting…' : 'Connect'}
+					</Button>
 				</>
-			)}
-			{!suggested && !isProgram && (
-				<label>
-					Its MCP address
-					<Input type="url" value={url} onChange={(event) => setUrl(event.target.value)} required />
-				</label>
-			)}
-			{isProgram ? (
-				<>
+			}
+		>
+			<form id={formId} className="ngm-form" onSubmit={connect}>
+				{!suggested && (
+					<>
+						<label>
+							What should it be called?
+							<Input value={name} onChange={(event) => setName(event.target.value)} required />
+						</label>
+						<label>
+							Where does it run?
+							<Select
+								value={ownKind}
+								onChange={(event) => setOwnKind(event.target.value as 'http' | 'command')}
+							>
+								<option value="http">A service on the web</option>
+								<option value="command">A program on this computer</option>
+							</Select>
+						</label>
+					</>
+				)}
+				{!suggested && !isProgram && (
 					<label>
-						The command that starts it
-						<Input value={command} onChange={(event) => setCommand(event.target.value)} required />
+						Its MCP address
+						<Input
+							type="url"
+							value={url}
+							onChange={(event) => setUrl(event.target.value)}
+							required
+						/>
 					</label>
-					<p className="ngm-notice">
-						This runs a program on your computer with your permissions, so only add one you trust.
-						You will be asked to confirm the exact command first.
-					</p>
-				</>
-			) : (
-				<label>
-					{suggested ? 'Paste your token' : 'Token, if it needs one'}
-					<Input
-						data-autofocus
-						type="password"
-						autoComplete="off"
-						value={token}
-						required={Boolean(suggested)}
-						onChange={(event) => setToken(event.target.value)}
-					/>
-					<span className="ngm-muted">
-						{suggested?.tokenHelp ?? 'From the service you are connecting.'} It is kept in this
-						computer's keychain.
-					</span>
-				</label>
-			)}
-			{problem && (
-				<p className="ngm-error" role="alert">
-					{problem}
-				</p>
-			)}
-			<div className="ngm-row">
-				<Button type="submit" variant="primary" disabled={connecting}>
-					{connecting ? 'Connecting…' : 'Connect'}
-				</Button>
-				<Button onClick={onDone} disabled={connecting}>
-					Cancel
-				</Button>
-			</div>
-		</form>
+				)}
+				{isProgram ? (
+					<>
+						<label>
+							The command that starts it
+							<Input
+								value={command}
+								onChange={(event) => setCommand(event.target.value)}
+								required
+							/>
+						</label>
+						<p className="ngm-notice">
+							This runs a program on your computer with your permissions, so only add one you trust.
+							You will be asked to confirm the exact command first.
+						</p>
+					</>
+				) : (
+					<label>
+						{suggested ? 'Paste your token' : 'Token, if it needs one'}
+						<Input
+							data-autofocus
+							type="password"
+							autoComplete="off"
+							value={token}
+							required={Boolean(suggested)}
+							onChange={(event) => setToken(event.target.value)}
+						/>
+						<span className="ngm-muted">
+							{suggested?.tokenHelp ?? 'From the service you are connecting.'} It is kept in this
+							computer's keychain.
+						</span>
+					</label>
+				)}
+			</form>
+		</Dialog>
 	)
 }
 
@@ -552,19 +577,16 @@ export function AddonsPanel({
 			</div>
 
 			{draft && (
-				<Dialog
+				<ConnectForm
 					title={draft.kind === 'suggested' ? `Connect ${draft.name}` : 'Connect your own'}
 					onClose={() => !busy && setDraft(null)}
-				>
-					<ConnectForm
-						draft={draft}
-						host={host}
-						settings={settings}
-						onChange={onChange}
-						onDone={() => setDraft(null)}
-						onBusy={setBusy}
-					/>
-				</Dialog>
+					draft={draft}
+					host={host}
+					settings={settings}
+					onChange={onChange}
+					onDone={() => setDraft(null)}
+					onBusy={setBusy}
+				/>
 			)}
 		</section>
 	)

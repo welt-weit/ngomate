@@ -12,6 +12,8 @@ pub enum Area {
     /// Jobs are Markdown too, beside their state as JSON in the same folder.
     Jobs,
     JobStates,
+    /// Tasks a person made, as Markdown like the built-in ones.
+    Tasks,
 }
 
 impl Area {
@@ -22,6 +24,7 @@ impl Area {
             "settings" => Ok(Area::Settings),
             "jobs" => Ok(Area::Jobs),
             "job-states" => Ok(Area::JobStates),
+            "tasks" => Ok(Area::Tasks),
             _ => Err(Error::msg(format!("Unknown storage area {name}"))),
         }
     }
@@ -32,12 +35,13 @@ impl Area {
             Area::Conversations => "conversations",
             Area::Settings => "settings",
             Area::Jobs | Area::JobStates => "jobs",
+            Area::Tasks => "tasks",
         }
     }
 
     fn extension(self) -> &'static str {
         match self {
-            Area::Memory | Area::Jobs => "md",
+            Area::Memory | Area::Jobs | Area::Tasks => "md",
             _ => "json",
         }
     }
@@ -214,6 +218,16 @@ mod tests {
         assert_eq!(list(dir.path(), Area::JobStates).unwrap().len(), 1);
         remove(dir.path(), Area::Jobs, "funding").unwrap();
         assert!(dir.path().join("jobs/funding.json").exists());
+    }
+
+    #[test]
+    fn keeps_tasks_a_person_made_as_markdown_in_their_own_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), Area::Tasks, "funder-check", "---\nid: funder-check\n---\n").unwrap();
+        assert!(dir.path().join("tasks/funder-check.md").exists());
+        assert_eq!(list(dir.path(), Area::Tasks).unwrap().len(), 1);
+        assert_eq!(list(dir.path(), Area::Jobs).unwrap().len(), 0);
+        assert!(write(dir.path(), Area::Tasks, "../escape", "x").is_err());
     }
 
     #[test]

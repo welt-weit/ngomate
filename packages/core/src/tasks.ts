@@ -50,6 +50,36 @@ export function parseTaskFile(source: string): TaskFile {
 	}
 }
 
+/** One line per field, so no field carries a line break, and with it another field, into the block. */
+const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+/**
+ * The file for a task, readable by a person and by `parseTaskFile`. Throws rather than write a file that
+ * would not read back: an empty field, or a named tool that would read as another.
+ */
+export function serializeTaskFile(task: TaskFile): string {
+	if (Array.isArray(task.tools)) {
+		const odd = task.tools.find(
+			(name) => /[,\s]/.test(name.trim()) || ['all', 'none', ''].includes(name.trim()),
+		)
+		if (odd !== undefined) throw new Error(`A tool's name cannot be "${odd}".`)
+	}
+	const text = [
+		'---',
+		`id: ${oneLine(task.id)}`,
+		`title: ${oneLine(task.title)}`,
+		`description: ${oneLine(task.description)}`,
+		`ask: ${oneLine(task.ask)}`,
+		`tools: ${Array.isArray(task.tools) ? task.tools.map(oneLine).join(', ') : task.tools}`,
+		...(task.needs ? [`needs: ${task.needs}`] : []),
+		'---',
+		task.instructions.trim(),
+		'',
+	].join('\n')
+	parseTaskFile(text)
+	return text
+}
+
 /** Named tools count as reads: a write has to be offered by a source that marks it otherwise. */
 export function taskFileToProfile(task: TaskFile): TaskProfile {
 	return {

@@ -11,6 +11,9 @@ import {
 } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { type ActionItem, ActionMenu } from './ActionMenu.js'
+import { DraftCard } from './DraftCard.js'
+import { type Draft, type MakingContext, emptyDraft } from './drafts.js'
 import { promptLabel } from './format.js'
 import type { AnswerNotice, AnswerTiming, NgomateHost, PickedDocument } from './host.js'
 import { ICONS, Icon } from './icons.js'
@@ -53,7 +56,26 @@ function WriteConfirmation({ request }: { request: PendingWrite }) {
 	)
 }
 
+/** Whether the checks found anything to say about an answer: an empty notice is not drawn at all. */
+export function noticeSaysSomething(notice: AnswerNotice): boolean {
+	return Boolean(
+		notice.stopped ||
+			notice.knowledgeEntries?.length ||
+			notice.knowledgeUnavailable ||
+			notice.cutOff ||
+			notice.toolsDidNotFit?.length ||
+			notice.neverRead?.length ||
+			notice.partlyRead?.length ||
+			notice.earlierLeftOut ||
+			notice.figureProblems?.length ||
+			notice.checkFigures ||
+			notice.unsourcedDates.length ||
+			notice.unsourcedLinks.length,
+	)
+}
+
 function Notice({ notice }: { notice: AnswerNotice }) {
+	if (!noticeSaysSomething(notice)) return null
 	return (
 		<div className="ngm-notice">
 			{notice.stopped && <p>{notice.stopped}</p>}
@@ -135,30 +157,6 @@ export function formatTime(iso: string, now = new Date()): string {
 	return `${date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}, ${time}`
 }
 
-type MenuItem = { label: string; onSelect: () => void }
-
-/** A "⋯" button that shows a short list of actions. */
-function MessageMenu({ items }: { items: MenuItem[] }) {
-	const { Button, Popover } = usePrimitives()
-	const [open, setOpen] = useState(false)
-	return (
-		<Popover label="More actions" trigger="⋯" open={open} onOpenChange={setOpen}>
-			{items.map((item) => (
-				<Button
-					key={item.label}
-					variant="quiet"
-					onClick={() => {
-						setOpen(false)
-						item.onSelect()
-					}}
-				>
-					{item.label}
-				</Button>
-			))}
-		</Popover>
-	)
-}
-
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`
 const count = (n: number) => n.toLocaleString('en')
 
@@ -201,7 +199,7 @@ function MessageMeta({
 	/** Shown when pointing at the time. */
 	timeTitle?: string
 	onRetry?: () => void
-	items: MenuItem[]
+	items: ActionItem[]
 	note?: string | null
 }) {
 	const { Button } = usePrimitives()
@@ -218,7 +216,7 @@ function MessageMeta({
 					Retry
 				</Button>
 			)}
-			<MessageMenu items={items} />
+			<ActionMenu label="More actions" items={items} className="" />
 		</div>
 	)
 }
@@ -244,7 +242,7 @@ const MessageView = memo(function MessageView({
 	onProblem: (err: unknown) => void
 }) {
 	const [copied, setCopied] = useState(false)
-	const copy = (text: string): MenuItem => ({
+	const copy = (text: string): ActionItem => ({
 		label: copied ? 'Copied' : 'Copy',
 		onSelect: () => navigator.clipboard.writeText(text).then(() => setCopied(true), onProblem),
 	})
@@ -310,7 +308,42 @@ function fitToText(field: HTMLTextAreaElement) {
 	field.style.height = `${Math.min(field.scrollHeight, Math.round(window.innerHeight / 3))}px`
 }
 
-export type ChatStart = { task?: TaskFile; prompt?: { definition: PromptDefinition; text: string } }
+export type ChatStart = {
+	task?: TaskFile
+	prompt?: { definition: PromptDefinition; text: string }
+	/**
+	 * Something to make in this chat: the draft, given to it once it has been read, and the person's
+	 * words, sent at once if there are any. `title` names a chat that has no messages yet.
+	 */
+	making?: { draft: Draft; text?: string; title?: string }
+}
+
+/** What a chat needs to make a task or job with the person. Left out by a host that cannot keep them. */
+export type ChatMaking = {
+	context: MakingContext
+	taskTitle: (id: string) => string | undefined
+	/**
+	 * Saves what the draft makes. Resolves to its key and name; throws with a reason. A step saved on the
+	 * way, such as a job's new task, is handed to `onStep`, so trying again does not make it twice.
+	 */
+	save: (
+		draft: Draft,
+		onStep: (draft: Draft) => Promise<void>,
+	) => Promise<{ key: string; title: string }>
+	/** Opens the form filled in from the draft. Resolves to what was saved there, or null. */
+	openForm: (
+		draft: Draft,
+		onStep: (draft: Draft) => Promise<void>,
+	) => Promise<{ key: string; title: string } | null>
+	/** A saved item as a draft to change, read anew, so nothing discarded earlier comes back. */
+	draftOf: (kind: Draft['kind'], key: string) => Draft | undefined
+	/** Shows the saved item in its list. */
+	open: (draft: Draft) => void
+	/** The name of what a saved draft made. */
+	titleOf: (draft: Draft) => string | undefined
+	/** This chat is making something not yet saved (`kind`), or no longer is. */
+	onDraft: (conversationId: string, kind: Draft['kind'] | null, saved?: string) => void
+}
 
 export function Chat({
 	deps,
@@ -318,6 +351,7 @@ export function Chat({
 	start,
 	onStarted,
 	attachRequest = 0,
+	making,
 }: {
 	deps: ChatDeps
 	conversationId: string
@@ -325,6 +359,7 @@ export function Chat({
 	onStarted: () => void
 	/** Counts up each time the menu asks this conversation to attach a document. */
 	attachRequest?: number
+	making?: ChatMaking
 }) {
 	const { Button, TextArea, Chip } = usePrimitives()
 	const chat = useChat(deps, conversationId)
@@ -340,11 +375,56 @@ export function Chat({
 	)
 
 	useEffect(() => {
-		if (!start) return
+		if (!start || start.making) return
 		setTask(start.task)
 		setPrompt(start.prompt)
 		onStarted()
 	}, [start, onStarted])
+
+	// Something to make, from New task, New job or Change in chat: once the chat has been read, so
+	// nothing it holds is saved over.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs once per start, when the chat is read
+	useEffect(() => {
+		const begin = start?.making
+		// Not while an answer is written there: it would be saved over, or two would run at once.
+		if (!begin || !chat.loaded || chat.busy || !making) return
+		onStarted()
+		making.onDraft(conversationId, begin.draft.kind)
+		if (begin.text)
+			void chat.send(
+				begin.text,
+				{ making: making.context },
+				{ ...chat.conversation, draft: begin.draft },
+			)
+		else
+			void chat.updateDraft(
+				begin.draft,
+				chat.conversation.messages.length ? undefined : begin.title,
+			)
+	}, [start, chat.loaded, chat.busy, Boolean(making)])
+
+	const [makeFrom, setMakeFrom] = useState(false)
+	// A draft being saved: nothing else is sent meanwhile, or the answer would put it back unsaved.
+	const [savingDraft, setSavingDraft] = useState(false)
+	const draft = chat.conversation.draft
+	const startDraft = (kind: Draft['kind']) => {
+		if (!making) return
+		setMakeFrom(false)
+		making.onDraft(conversationId, kind)
+		void chat.send(
+			kind === 'job' ? 'Make a job from this conversation.' : 'Make a task from this conversation.',
+			{ making: making.context },
+			{ ...chat.conversation, draft: emptyDraft(kind) },
+		)
+	}
+	/** Marks the draft saved, as it is now: a job's new task may have been saved into it meanwhile. */
+	const markSaved = async (saved: { key: string; title: string }) => {
+		const now = chat.latest().draft
+		if (!now) return
+		const { editing: _editing, editingVersion: _version, ...rest } = now
+		await chat.updateDraft({ ...rest, saved: saved.key }, saved.title)
+		making?.onDraft(conversationId, null, saved.key)
+	}
 
 	/** Follows the end of the chat, until the person scrolls up to read; sending follows it again. */
 	const following = useRef(true)
@@ -389,11 +469,13 @@ export function Chat({
 
 	const submit = async (event?: FormEvent) => {
 		event?.preventDefault()
-		if (chat.busy || (!text.trim() && !documents.length && !prompt)) return
+		// Not while a draft is being saved: the answer would put the unsaved draft back over it.
+		if (chat.busy || savingDraft || (!text.trim() && !documents.length && !prompt)) return
 		const options = {
 			task,
 			documents,
 			prompt: prompt ? { title: promptLabel(prompt.definition), text: prompt.text } : undefined,
+			making: draft && !draft.saved ? making?.context : undefined,
 		}
 		setText('')
 		setDocuments([])
@@ -432,9 +514,49 @@ export function Chat({
 	const lastAnswer = messages.findLastIndex(
 		(message) => message.role === 'assistant' && !message.toolCalls?.length && message.content,
 	)
-	const retry = chat.busy ? undefined : () => void chat.retry()
+	const retry = chat.busy
+		? undefined
+		: () => void chat.retry(draft && !draft.saved ? making?.context : undefined)
 	return (
 		<div className="ngm-chat">
+			{draft && making && (
+				<DraftCard
+					draft={draft}
+					taskTitle={making.taskTitle}
+					savedTitle={draft.saved ? making.titleOf(draft) : undefined}
+					busy={chat.busy || savingDraft}
+					onMake={async () => {
+						setSavingDraft(true)
+						try {
+							await markSaved(await making.save(draft, (next) => chat.updateDraft(next)))
+						} finally {
+							setSavingDraft(false)
+						}
+					}}
+					onForm={() => {
+						void making
+							.openForm(draft, (next) => chat.updateDraft(next))
+							.then((saved) => saved && markSaved(saved))
+					}}
+					onDiscard={() => {
+						// A change is dropped, and what it was changing stays as it was saved: only the link to
+						// it is kept, and a later change starts from it anew.
+						const { editing } = draft
+						void chat.updateDraft(
+							editing ? { kind: draft.kind, task: {}, job: {}, saved: editing } : undefined,
+						)
+						making.onDraft(conversationId, null)
+					}}
+					onOpen={() => making.open(draft)}
+					onChange={() => {
+						if (!draft.saved) return
+						const fresh = making.draftOf(draft.kind, draft.saved)
+						if (!fresh) return
+						void chat.updateDraft(fresh)
+						making.onDraft(conversationId, draft.kind)
+					}}
+				/>
+			)}
 			<div className="ngm-messages" ref={messagesBox} aria-live="polite" onScroll={onScroll}>
 				{messages.length === 0 && !chat.busy && (
 					<div className="ngm-empty">
@@ -485,6 +607,26 @@ export function Chat({
 										: 'Thinking…'}
 					</output>
 				)}
+				{making &&
+					!draft &&
+					!chat.busy &&
+					lastAnswer > lastQuestion &&
+					(makeFrom ? (
+						<div className="ngm-row">
+							<Button onClick={() => startDraft('task')}>As a task you run again</Button>
+							<Button onClick={() => startDraft('job')}>As a job on a schedule</Button>
+							<Button variant="quiet" onClick={() => setMakeFrom(false)}>
+								Cancel
+							</Button>
+						</div>
+					) : (
+						<div className="ngm-row">
+							<Button variant="quiet" className="ngm-ai" onClick={() => setMakeFrom(true)}>
+								<Icon path={ICONS.spark} size={14} />
+								Make a task or job from this
+							</Button>
+						</div>
+					))}
 				{chat.pendingWrite && <WriteConfirmation request={chat.pendingWrite} />}
 				{chat.error && (
 					<p className="ngm-error" role="alert">
