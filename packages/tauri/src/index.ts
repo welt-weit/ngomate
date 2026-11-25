@@ -18,10 +18,10 @@ import {
 	type ModelHost,
 	type NgomateHost,
 	type OwnTaskStore,
-	type VoiceHost,
 	type PickedDocument,
 	type Settings,
 	type TeamHost,
+	type VoiceHost,
 } from '@ngomate/ui'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
@@ -179,11 +179,17 @@ const models: ModelHost = {
 /** Voice input with Whisper, built into the plugin. Its models download like the chat models. */
 const voice: VoiceHost = {
 	info: () => call('voice_info'),
+	prepare: (id) => call('voice_prepare', { id }),
 	download: models.download,
 	cancelDownload: models.cancelDownload,
 	remove: models.remove,
-	// Sent as numbers: two minutes at most, which the plugin also checks.
-	transcribe: (id, samples) => call<string>('voice_transcribe', { id, samples: Array.from(samples) }),
+	// Sent as raw bytes, the samples as they are: as JSON numbers a minute of speech is megabytes of text.
+	transcribe: (id, samples) =>
+		invoke<string>(
+			'plugin:ngomate|voice_transcribe',
+			new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength),
+			{ headers: { 'x-voice-model': id } },
+		),
 }
 
 /** A connector that is a program on this computer, speaking MCP over its input and output. */

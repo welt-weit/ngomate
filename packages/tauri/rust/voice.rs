@@ -52,6 +52,14 @@ pub fn recommended(ram_gb: u64) -> &'static str {
     }
 }
 
+/// Samples sent as little-endian 32-bit floats, four bytes each.
+pub fn samples_from_bytes(bytes: &[u8]) -> Result<Vec<f32>> {
+    if bytes.len() % 4 != 0 {
+        return Err(Error::msg("The recording arrived cut off. Try again."));
+    }
+    Ok(bytes.chunks_exact(4).map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect())
+}
+
 /// Whether a recording can be turned into text: not empty, and not longer than the limit.
 pub fn check_length(samples: usize) -> Result<()> {
     if samples == 0 {
@@ -63,11 +71,20 @@ pub fn check_length(samples: usize) -> Result<()> {
     Ok(())
 }
 
+/// Loads a voice model ahead of use, while the person is still speaking, so writing it down afterwards
+/// does not wait for loading (and, the first time on a computer, for preparing the graphics chip).
+pub async fn prepare(voice: Arc<Voice>, id: String, path: std::path::PathBuf) -> Result<()> {
+    tokio::task::spawn_blocking(move || voice.context(&id, &path).map(|_| ()))
+        .await
+        .map_err(|err| Error::msg(format!("Voice stopped unexpectedly: {err}")))?
+}
+
 /// Turns a recording into text, in the language spoken. Runs off the async threads: it takes seconds.
-pub async fn transcribe(voice: &Voice, id: &str, path: &Path, samples: Vec<f32>) -> Result<String> {
+pub async fn transcribe(voice: Arc<Voice>, id: String, path: std::path::PathBuf, samples: Vec<f32>) -> Result<String> {
     check_length(samples.len())?;
-    let context = voice.context(id, path)?;
     tokio::task::spawn_blocking(move || {
+        // Waits here, off the async threads, if the model is still being loaded for this recording.
+        let context = voice.context(&id, &path)?;
         let mut state = context.create_state().map_err(|err| Error::msg(format!("Voice could not start: {err}")))?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some("auto"));
@@ -99,6 +116,13 @@ mod tests {
     }
 
     #[test]
+    fn reads_samples_sent_as_bytes() {
+        let bytes: Vec<u8> = [0.5f32, -1.0].iter().flat_map(|value| value.to_le_bytes()).collect();
+        assert_eq!(samples_from_bytes(&bytes).unwrap(), vec![0.5, -1.0]);
+        assert!(samples_from_bytes(&bytes[..5]).is_err());
+    }
+
+    #[test]
     fn refuses_an_empty_or_too_long_recording() {
         assert!(check_length(0).is_err());
         assert!(check_length(SAMPLE_RATE).is_ok());
@@ -118,10 +142,14 @@ mod tests {
         let given = std::env::var("NGOMATE_VOICE_TEST").expect("NGOMATE_VOICE_TEST");
         let (model, wav) = given.split_once(' ').expect("<model> <wav>");
         let samples = wav_samples(&std::fs::read(wav).unwrap());
-        let started = std::time::Instant::now();
-        let text = transcribe(&Voice::default(), "whisper-base-q5", Path::new(model), samples).await.unwrap();
-        eprintln!("{:.1} s: {text}", started.elapsed().as_secs_f32());
-        assert!(text.to_lowercase().contains("funding"), "{text}");
+        let voice = Arc::new(Voice::default());
+        // Twice: the first pays for loading the model, the second is what each recording after it costs.
+        for round in ["first", "again"] {
+            let started = std::time::Instant::now();
+            let text = transcribe(Arc::clone(&voice), "whisper-base-q5".into(), model.into(), samples.clone()).await.unwrap();
+            eprintln!("{round}: {:.1} s: {text}", started.elapsed().as_secs_f32());
+            assert!(text.to_lowercase().contains("funding"), "{text}");
+        }
     }
 
     #[test]

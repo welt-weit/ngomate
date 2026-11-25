@@ -1367,7 +1367,9 @@ select.ngm-input {
 
 /* What voice input is doing, just above the message field. */
 .ngm-voice-line {
-	display: block;
+	display: flex;
+	gap: var(--ngm-space-2);
+	align-items: center;
 	margin: 0 0 var(--ngm-space-2);
 	color: var(--ngm-muted);
 	font-size: 13px;
@@ -1417,4 +1419,12 @@ select.ngm-input {
 	flex-wrap: wrap;
 	gap: var(--ngm-space-2);
 	align-items: center;
+}
+
+/* The little wave while the microphone listens: the accent colour, flat in silence. */
+.ngm-voice-wave {
+	flex: 0 0 auto;
+	width: 96px;
+	height: 16px;
+	fill: var(--ngm-accent);
 }

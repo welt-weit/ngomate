@@ -19,7 +19,7 @@ import type { AnswerNotice, AnswerTiming, NgomateHost, PickedDocument } from './
 import { ICONS, Icon } from './icons.js'
 import { usePrimitives } from './primitives.js'
 import { type ChatDeps, type PendingWrite, useChat } from './useChat.js'
-import { useVoice } from './useVoice.js'
+import { WAVE_BARS, useVoice } from './useVoice.js'
 
 function WriteConfirmation({ request }: { request: PendingWrite }) {
 	const { Button } = usePrimitives()
@@ -146,6 +146,32 @@ function Notice({ notice }: { notice: AnswerNotice }) {
 				</p>
 			)}
 		</div>
+	)
+}
+
+/**
+ * How loud the microphone is, over the last moments: flat while it is quiet, moving while someone speaks.
+ * Drawn from the readings alone; nothing of the sound itself is shown or kept.
+ */
+function VoiceWave({ levels }: { levels: number[] }) {
+	const bars = [...Array(Math.max(0, WAVE_BARS - levels.length)).fill(0), ...levels]
+	return (
+		<svg className="ngm-voice-wave" viewBox={`0 0 ${WAVE_BARS * 3} 16`} aria-hidden="true">
+			{bars.map((level, index) => {
+				const height = Math.max(1.5, level * 16)
+				return (
+					<rect
+						// biome-ignore lint/suspicious/noArrayIndexKey: a bar is its place in the wave
+						key={index}
+						x={index * 3}
+						y={(16 - height) / 2}
+						width={2}
+						height={height}
+						rx={1}
+					/>
+				)
+			})}
+		</svg>
 	)
 }
 
@@ -720,6 +746,7 @@ export function Chat({
 				))}
 				{voice.status.kind !== 'idle' && (
 					<output className="ngm-voice-line">
+						{voice.status.kind === 'listening' && <VoiceWave levels={voice.levels} />}
 						{voice.status.kind === 'listening'
 							? `Listening… ${clock(Date.now() - voice.status.since)}. Press the microphone again to write it down.`
 							: voice.status.kind === 'writing'

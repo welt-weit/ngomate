@@ -11,6 +11,7 @@ const COMMANDS: &[&str] = &[
     "save_document",
     "model_info",
     "voice_info",
+    "voice_prepare",
     "voice_transcribe",
     "model_download",
     "model_cancel_download",

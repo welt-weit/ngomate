@@ -68,12 +68,17 @@ export interface VoiceHost {
 	cancelDownload(id: string): Promise<void>
 	remove(id: string): Promise<void>
 	transcribe(id: string, samples: Float32Array): Promise<string>
+	/** Loads a model ahead of use, while the person speaks. Optional: transcribing loads it anyway. */
+	prepare?(id: string): Promise<void>
 	/** Records from the microphone. Left out, the window records itself, as a browser does. */
 	record?(): Promise<Recording>
 }
 
-/** A recording under way: stopped, it gives its 16 kHz mono samples; cancelled, nothing. */
-export type Recording = { stop(): Promise<Float32Array>; cancel(): void }
+/**
+ * A recording under way: stopped, it gives its 16 kHz mono samples; cancelled, nothing. `level` is how
+ * loud it is right now, from 0 (silence) to 1, so the window can show it is hearing something.
+ */
+export type Recording = { stop(): Promise<Float32Array>; cancel(): void; level?(): number }
 
 /** The local model runtime. A host without one, such as a browser preview, leaves this out. */
 export interface ModelHost {

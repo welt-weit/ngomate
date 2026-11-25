@@ -257,7 +257,18 @@ export function fakeVoice(options: { heard: string; installed?: string[] }): Voi
 		cancelDownload: async () => {},
 		remove: async (id) => void installed.delete(id),
 		transcribe: async () => options.heard,
-		record: async () => ({ stop: async () => new Float32Array(16_000), cancel: () => {} }),
+		record: async () => {
+			const started = Date.now()
+			return {
+				stop: async () => new Float32Array(16_000),
+				cancel: () => {},
+				// A made-up voice: a few words, a pause, a few more.
+				level: () => {
+					const t = (Date.now() - started) / 1000
+					return t % 3 < 2 ? 0.3 + 0.5 * Math.abs(Math.sin(t * 9)) : 0.02
+				},
+			}
+		},
 	}
 }
 

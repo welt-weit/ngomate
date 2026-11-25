@@ -15,6 +15,7 @@ permissions = [
   "allow-save-document",
   "allow-model-info",
   "allow-voice-info",
+  "allow-voice-prepare",
   "allow-voice-transcribe",
   "allow-model-download",
   "allow-model-cancel-download",

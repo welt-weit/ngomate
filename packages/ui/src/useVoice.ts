@@ -5,6 +5,8 @@ import type { DownloadProgress, ModelEntry, NgomateHost, Recording, VoiceInfo } 
 const SAMPLE_RATE = 16_000
 /** The same limit the host keeps: a recording stops by itself after two minutes. */
 export const MAX_SECONDS = 120
+/** How many readings the wave shows. */
+export const WAVE_BARS = 32
 
 /** Starts recording from the microphone. Throws with a reason the person can act on. */
 export type Recorder = () => Promise<Recording>
@@ -35,6 +37,12 @@ export const webRecorder: Recorder = async () => {
 				: 'No microphone was found.',
 		)
 	}
+	// How loud it is now, read from the stream as it records: nothing is kept from it.
+	const meter = new AudioContext()
+	const analyser = meter.createAnalyser()
+	analyser.fftSize = 512
+	meter.createMediaStreamSource(stream).connect(analyser)
+	const wave = new Uint8Array(analyser.fftSize)
 	const chunks: Blob[] = []
 	const recorder = new MediaRecorder(stream)
 	recorder.ondataavailable = (event) => chunks.push(event.data)
@@ -44,6 +52,7 @@ export const webRecorder: Recorder = async () => {
 	recorder.start()
 	const release = () => {
 		for (const track of stream.getTracks()) track.stop()
+		void meter.close().catch(() => {})
 	}
 	return {
 		async stop() {
@@ -55,6 +64,13 @@ export const webRecorder: Recorder = async () => {
 		cancel() {
 			if (recorder.state !== 'inactive') recorder.stop()
 			release()
+		},
+		level() {
+			analyser.getByteTimeDomainData(wave)
+			let sum = 0
+			for (const value of wave) sum += ((value - 128) / 128) ** 2
+			// Speech sits far below full scale: scaled so a normal voice fills most of the height.
+			return Math.min(1, Math.sqrt(sum / wave.length) * 4)
 		},
 	}
 }
@@ -93,6 +109,8 @@ export function useVoice(
 	// Asked before the first download: a model the person has not agreed to fetch yet.
 	const [needsSetup, setNeedsSetup] = useState<ModelEntry | null>(null)
 	const recording = useRef<Recording | null>(null)
+	// The last readings of how loud it is, newest last, for the little wave while listening.
+	const [levels, setLevels] = useState<number[]>([])
 	const limit = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const onTextRef = useRef(onText)
 	onTextRef.current = onText
@@ -138,6 +156,11 @@ export function useVoice(
 				return
 			}
 			recording.current = await recorder()
+			// Loaded while the person speaks, so writing it down afterwards does not wait for it.
+			voice
+				.prepare?.(model.id)
+				.catch((err) => console.error('The voice model could not be loaded:', err))
+			setLevels([])
 			setStatus({ kind: 'listening', since: Date.now() })
 			limit.current = setTimeout(() => void finish(), MAX_SECONDS * 1000)
 		} catch (err) {
@@ -165,9 +188,20 @@ export function useVoice(
 		[voice],
 	)
 
+	// While listening, twenty readings a second; the wave keeps the last WAVE_BARS.
+	useEffect(() => {
+		if (status.kind !== 'listening') return
+		const timer = setInterval(() => {
+			const level = recording.current?.level?.() ?? 0
+			setLevels((all) => [...all.slice(-(WAVE_BARS - 1)), level])
+		}, 50)
+		return () => clearInterval(timer)
+	}, [status.kind])
+
 	return {
 		available: Boolean(voice),
 		status,
+		levels,
 		problem,
 		needsSetup,
 		/** The microphone button: listen, or finish listening. */

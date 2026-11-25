@@ -499,20 +499,42 @@ fn voice_info<R: TauriRuntime>(app: AppHandle<R>, downloads: State<'_, Downloads
     })
 }
 
-/// Turns a recording into text with a voice model on this computer. The recording is not kept.
+/// Loads the voice model when the microphone starts listening, so it is ready when the person stops.
+#[tauri::command]
+async fn voice_prepare<R: TauriRuntime>(
+    app: AppHandle<R>,
+    voice: State<'_, std::sync::Arc<voice::Voice>>,
+    id: String,
+) -> Result<()> {
+    let entry = catalog::find_voice(&id).ok_or_else(|| Error::msg(format!("Unknown voice model {id}")))?;
+    let path = models::installed_path(&usable_models_dir(&app)?, entry);
+    voice::prepare(std::sync::Arc::clone(&voice), id, path).await
+}
+
+/// Turns a recording into text with a voice model on this computer. The recording is not kept. It
+/// arrives as raw bytes (32-bit float samples), not as JSON: a minute of speech is a million numbers.
 #[tauri::command]
 async fn voice_transcribe<R: TauriRuntime>(
     app: AppHandle<R>,
-    voice: State<'_, voice::Voice>,
-    id: String,
-    samples: Vec<f32>,
+    voice: State<'_, std::sync::Arc<voice::Voice>>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<String> {
+    let id = request
+        .headers()
+        .get("x-voice-model")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| Error::msg("No voice model was named."))?
+        .to_string();
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(Error::msg("The recording did not arrive as sound."));
+    };
+    let samples = voice::samples_from_bytes(bytes)?;
     let entry = catalog::find_voice(&id).ok_or_else(|| Error::msg(format!("Unknown voice model {id}")))?;
     let path = models::installed_path(&usable_models_dir(&app)?, entry);
     if !path.exists() {
         return Err(Error::msg("The voice model is not downloaded yet."));
     }
-    voice::transcribe(&voice, &id, &path, samples).await
+    voice::transcribe(std::sync::Arc::clone(&voice), id, path, samples).await
 }
 
 #[tauri::command]
@@ -524,7 +546,7 @@ fn model_cancel_download(downloads: State<'_, Downloads>, id: String) {
 async fn model_remove<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>, id: String) -> Result<()> {
     let entry = any_model(&id)?;
     // A voice model in use is let go first, so its file can be removed.
-    app.state::<voice::Voice>().forget(&id);
+    app.state::<std::sync::Arc<voice::Voice>>().forget(&id);
     app.state::<FolderChange>().check()?;
     // Held to the end, so a save under way cannot write the file back and a start cannot load the model.
     let _settled = runtime.settled().await;
@@ -698,6 +720,7 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
     Builder::new("ngomate")
         .invoke_handler(tauri::generate_handler![
             voice_info,
+            voice_prepare,
             voice_transcribe,
             store_list,
             store_read,
@@ -744,7 +767,7 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             app.manage(Downloads::default());
             app.manage(FolderChange::default());
             app.manage(Addons::default());
-            app.manage(voice::Voice::default());
+            app.manage(std::sync::Arc::new(voice::Voice::default()));
             Ok(())
         })
         .on_event(|app, event| {
