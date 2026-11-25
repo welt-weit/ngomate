@@ -1,6 +1,6 @@
 [package]
 name = "ngomate-desktop"
-version = "0.0.4"
+version = "0.0.5"
 description = "NGOmate desktop app"
 license = "MIT"
 edition = "2021"
