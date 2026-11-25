@@ -1,4 +1,9 @@
-import type { PromptDefinition, TaskFile } from '@ngomate/core'
+import {
+	DEFAULT_TEAM_LIMITS,
+	type PromptDefinition,
+	type TaskFile,
+	createTeamJobStore,
+} from '@ngomate/core'
 import {
 	type CSSProperties,
 	Fragment,
@@ -11,12 +16,13 @@ import {
 } from 'react'
 import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatStart } from './Chat.js'
+import { JobDialog } from './JobDialog.js'
 import { ProfileMenu } from './ProfileMenu.js'
 import { SettingsPage, type SettingsSection } from './Settings.js'
-import { type FoundText, WorkPanel, type WorkTask, matches } from './WorkPanel.js'
 import { TabBar, startConversationDrag } from './TabBar.js'
 import { TeamPanel } from './TeamPanel.js'
 import { UpdateNotice } from './UpdateNotice.js'
+import { type FoundText, WorkPanel, type WorkTask, matches } from './WorkPanel.js'
 import { makeId, promptLabel } from './format.js'
 import { DEFAULT_SETTINGS, type MenuCommand, type NgomateHost, type Settings } from './host.js'
 import { ICONS, Icon } from './icons.js'
@@ -45,6 +51,7 @@ import {
 } from './primitives.js'
 import { selectAllInConversation } from './select-all.js'
 import { useIdleUnload } from './useIdleUnload.js'
+import { useJobs } from './useJobs.js'
 import { type TeamTask, useTeam } from './useTeam.js'
 
 /** The conversations, the notes, or the settings. */
@@ -268,7 +275,16 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 
 	const models = host.models
 	// Whatever is chosen now: a local model used earlier still has to go.
-	const onBusyChange = useIdleUnload(models ? () => models.stop() : undefined)
+	const idleBusy = useIdleUnload(models ? () => models.stop() : undefined)
+	// Conversations being answered now: a job waits until none is.
+	const chatsBusy = useRef(0)
+	const onBusyChange = useCallback(
+		(busy: boolean) => {
+			chatsBusy.current = Math.max(0, chatsBusy.current + (busy ? 1 : -1))
+			idleBusy(busy)
+		},
+		[idleBusy],
+	)
 
 	const getModel = useCallback(async () => {
 		const choice = settings?.model
@@ -358,6 +374,60 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			teamAddonId,
 		],
 	)
+
+	// A job keeps the model loaded while it runs, without counting as a conversation it would wait for.
+	// Set once the conversation list's own delete is defined, further down.
+	const removeRunRef = useRef<(id: string) => Promise<void>>(async () => {})
+	const teamConnectors = useMemo(
+		() => (team.file?.connectors ?? []).map((item) => item.url),
+		[team.file?.connectors],
+	)
+	const jobDeps = useMemo(
+		() =>
+			settings
+				? {
+						chat: { ...deps, onBusyChange: idleBusy },
+						tasks: host.tasks,
+						teamTasks: team.tasks,
+						teamId: team.activeId ?? undefined,
+						teamConnectors,
+					}
+				: null,
+		[settings, deps, idleBusy, host, team.tasks, team.activeId, teamConnectors],
+	)
+	// A team shares jobs only on S3 or WebDAV, where a write over a changed file is refused at the
+	// storage itself: that is what lets one member's computer claim a run. A synced folder only refuses
+	// on this computer's copy, which the others' sync apps see minutes later, and a connector's team tools
+	// hold notes and tasks only.
+	const teamLimits = useRef(DEFAULT_TEAM_LIMITS)
+	teamLimits.current = team.file?.limits ?? DEFAULT_TEAM_LIMITS
+	const sharedStorage = team.location?.type === 's3' || team.location?.type === 'webdav'
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the active team decides which jobs these are
+	const teamJobStore = useMemo(
+		() =>
+			team.store && team.refusesOverwrites && sharedStorage
+				? createTeamJobStore(team.store, () => teamLimits.current)
+				: null,
+		// Made again only for another team: the host's store is one object for every team, and the team
+		// file, read anew on every refresh, must not restart a run.
+		[team.store, team.refusesOverwrites, sharedStorage, team.activeId],
+	)
+	const jobs = useJobs(
+		host,
+		jobDeps,
+		() => chatsBusy.current > 0,
+		teamJobStore,
+		settings?.yourName?.trim() || 'Someone',
+		(ids) => {
+			// Deleted one by one, as from the list, so a tab or pin of one goes with it.
+			for (const id of ids) void removeRunRef.current(id).catch(() => {})
+		},
+	)
+	const [newJob, setNewJob] = useState(false)
+	// A job held because its team task changed, waiting for the person to read the task.
+	const [readJobTask, setReadJobTask] = useState<string | null>(null)
+	// A team job about to be deleted for everyone, waiting for the person to confirm.
+	const [deleteJob, setDeleteJob] = useState<string | null>(null)
 
 	const saved = (id: string) => conversations.some((conversation) => conversation.id === id)
 	/** A tab that holds nothing yet makes way, rather than staying open beside what comes next. */
@@ -569,6 +639,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		if (settings.pinned?.includes(id)) togglePin(id)
 		await refreshConversations()
 	}
+	removeRunRef.current = removeConversation
 
 	const runTeamTask = (item: TeamTask) => {
 		if (item.version && settings.teamTasksSeen?.[seenKey(item)] === item.version) {
@@ -895,6 +966,96 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						</div>
 					</Dialog>
 				)}
+				{newJob && (
+					<JobDialog
+						tasks={[
+							...host.tasks.map((task) => ({ task, fromTeam: false, version: null })),
+							...team.tasks
+								.filter((item) => !host.tasks.some((task) => task.id === item.task.id))
+								.map((item) => ({ task: item.task, fromTeam: true, version: item.version })),
+						]}
+						takenIds={{
+							own: jobs.list.filter((item) => !item.team).map((item) => item.id),
+							team: jobs.list.filter((item) => item.team).map((item) => item.id),
+						}}
+						teamId={team.activeId}
+						canWriteTeamNotes={Boolean(team.notes)}
+						canShareWithTeam={jobs.teamAvailable && Boolean(team.notes)}
+						onCreate={(job, options) =>
+							jobs.create(job, {
+								team: options.team,
+								taskVersion: options.taskVersion ?? undefined,
+							})
+						}
+						onClose={() => setNewJob(false)}
+					/>
+				)}
+				{readJobTask &&
+					(() => {
+						const item = jobs.list.find((each) => each.key === readJobTask)
+						const teamTask = team.tasks.find((each) => each.task.id === item?.job?.task)
+						return (
+							<Dialog title={teamTask?.task.title ?? 'Task'} onClose={() => setReadJobTask(null)}>
+								<p>
+									Someone in your team changed the task{' '}
+									{item?.job ? `the job "${item.job.title}"` : 'this job'} runs. Read what it tells
+									the assistant to do before the job runs it.
+								</p>
+								{teamTask ? (
+									<pre className="ngm-pre">{teamTask.text}</pre>
+								) : (
+									<p>The task is not in this team any more.</p>
+								)}
+								<div className="ngm-row">
+									<Button
+										variant="primary"
+										disabled={!teamTask || !item}
+										onClick={async () => {
+											if (!teamTask || !item) return
+											// Read here, so it is not asked again when the task is run as a chat.
+											const version = teamTask.version
+											if (version) {
+												patchSettings((latest) => ({
+													teamTasksSeen: { ...latest.teamTasksSeen, [seenKey(teamTask)]: version },
+												}))
+											}
+											// Run only once the new version is recorded, or it would be held again.
+											if (await jobs.acceptTask(item.key, version)) jobs.runNow(item.key)
+											setReadJobTask(null)
+										}}
+									>
+										Run the job with it
+									</Button>
+									<Button onClick={() => setReadJobTask(null)}>Cancel</Button>
+								</div>
+							</Dialog>
+						)
+					})()}
+				{deleteJob &&
+					(() => {
+						const item = jobs.list.find((each) => each.key === deleteJob)
+						const title = item?.job?.title ?? item?.id ?? 'this job'
+						return (
+							<Dialog title={`Delete ${title}?`} onClose={() => setDeleteJob(null)}>
+								<p>
+									It is deleted for everyone in the team, with the list of its runs and the chats of
+									the runs this computer made. The notes it wrote stay.
+								</p>
+								<div className="ngm-row">
+									<Button
+										variant="primary"
+										onClick={() => {
+											void jobs.remove(deleteJob)
+											setDeleteJob(null)
+										}}
+									>
+										Delete it for the team
+									</Button>
+									<Button onClick={() => setDeleteJob(null)}>Cancel</Button>
+								</div>
+							</Dialog>
+						)
+					})()}
 			</main>
 			<WorkPanel
 				conversations={conversations}
@@ -913,6 +1074,30 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				findIn={findIn}
 				onOpenNotes={() => openPage('memory')}
 				findRequest={findRequest}
+				jobs={
+					jobs.available
+						? {
+								list: jobs.list,
+								loaded: jobs.loaded,
+								running: jobs.running,
+								problem: jobs.problem,
+								onNew: () => setNewJob(true),
+								onRun: jobs.runNow,
+								onPause: (key, paused) => void jobs.setPaused(key, paused),
+								onDelete: (key) =>
+									jobs.list.find((each) => each.key === key)?.team
+										? setDeleteJob(key)
+										: void jobs.remove(key),
+								onOpenRun: (key, conversationId) => {
+									show(conversationId)
+									void jobs.markSeen(key, conversationId)
+								},
+								onReadTask: setReadJobTask,
+								onDecide: (key, ranAt, index, allow) =>
+									void jobs.decideChange(key, ranAt, index, allow),
+							}
+						: undefined
+				}
 			/>
 		</>
 	)

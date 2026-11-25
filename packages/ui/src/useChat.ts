@@ -140,6 +140,8 @@ export type SendOptions = {
 	task?: TaskFile
 	documents?: PickedDocument[]
 	prompt?: { title: string; text: string }
+	/** Said to the model beside the date and the notes, such as when a job last ran. */
+	context?: string
 }
 
 export type PendingWrite = WriteRequest & {
@@ -203,6 +205,302 @@ function connectTools(
 	})()
 }
 
+/**
+ * Makes one change a job asked for, once the person allows it: through the same connectors and the
+ * same tool the run would have used. A tool turned off or removed since is not reached.
+ */
+export async function makeChange(
+	deps: ChatDeps,
+	change: { tool: string; args: Record<string, unknown> },
+): Promise<void> {
+	const tools = await connectTools(deps.host, deps.settings.addons, false, () => {}, deps.team)
+	try {
+		const offered = await tools.listTools()
+		if (!offered.some((tool) => tool.name === change.tool))
+			throw new Error(`No connector offers ${change.tool} now.`)
+		const result = await tools.callTool(change.tool, change.args)
+		if (result.isError) throw new Error(result.text || `${change.tool} did not work.`)
+	} finally {
+		await tools.close().catch(() => {})
+	}
+}
+
+/**
+ * Why a ready-made task cannot run, when it needs a connector and none is on. Checked before the model
+ * is asked, which may otherwise answer from memory with calls that do not exist.
+ */
+export function missingConnector(deps: ChatDeps, task: TaskFile | undefined): string | null {
+	if (task?.needs !== 'addon' || deps.settings.addons.some((addon) => addon.enabled)) return null
+	return `${task.title} needs a connected tool. Add one under Connectors, such as a search service or Action Network Worldwide.`
+}
+
+/** What happens while an answer is written, for a window showing it. All optional but the first three. */
+export type AnswerHooks = {
+	signal: AbortSignal
+	/** Asked before anything is changed. A run nobody is watching refuses and records what was asked. */
+	confirmWrite: ConfirmWrite
+	/** The conversation as it stands, kept before the model is asked and again with its answer. */
+	save: (conversation: Conversation) => Promise<void>
+	onStartingModel?: (starting: boolean) => void
+	onBudget?: (room: ReturnType<typeof textBudget>) => void
+	onReadingDocument?: (reading: boolean) => void
+	/** A connector that could not be reached, once per name. */
+	onProblem?: (name: string) => void
+	/** Each piece of the answer as it is written. */
+	onText?: (piece: string) => void
+	/** A tool is called: what was written so far belonged to the step before. */
+	onToolCall?: (tool: string) => void
+	onTurn?: () => void
+}
+
+export type AnswerResult = {
+	conversation: Conversation
+	/** Shown instead of, or beside, an answer. */
+	error: string | null
+	/** The answer and what the checks found, when there is one. */
+	answer: string | null
+	notice: AnswerNotice | null
+}
+
+/**
+ * Sends one message and keeps the conversation with its answer: the chat in a window and a job no one
+ * is watching go through this same path, so both get the same material, limits and checks.
+ */
+export async function answerRequest(
+	deps: ChatDeps,
+	current: Conversation,
+	text: string,
+	options: SendOptions,
+	hooks: AnswerHooks,
+): Promise<AnswerResult> {
+	const { host } = deps
+	const { task, documents = [], prompt } = options
+	const request = [prompt?.text, text].filter(Boolean).join('\n\n')
+	const named = documents.length
+		? `[Attached: ${documents.map((document) => document.name).join(', ')}]`
+		: ''
+	// What is kept and shown. The documents themselves go with each message, as far as it needs them.
+	const input = [request, named].filter(Boolean).join('\n\n')
+	// The same file attached twice would only divide the room between two copies.
+	const allDocuments = [...(current.documents ?? []), ...documents].filter(
+		(document, index, all) =>
+			all.findIndex((other) => other.name === document.name && other.text === document.text) ===
+			index,
+	)
+	const nothing = { conversation: current, answer: null, notice: null }
+	if (!input.trim()) return { ...nothing, error: null }
+	const missing = missingConnector(deps, task)
+	if (missing) return { ...nothing, error: missing }
+
+	let tools: ToolSource | null = null
+	let written = ''
+	// Where the wait went, kept with the answer so slow answers can be looked into.
+	const sentAt = performance.now()
+	const waited = { startMs: 0, firstWordMs: null as number | null }
+	// A hidden window may be slowed down by the computer, which would look like a slow answer.
+	const hidden = { ms: 0, since: document.hidden ? sentAt : (null as number | null) }
+	const onVisibility = () => {
+		if (document.hidden) hidden.since ??= performance.now()
+		else if (hidden.since !== null) {
+			hidden.ms += performance.now() - hidden.since
+			hidden.since = null
+		}
+	}
+	document.addEventListener('visibilitychange', onVisibility)
+	const hiddenMs = () =>
+		Math.round(hidden.ms + (hidden.since === null ? 0 : performance.now() - hidden.since))
+	const title = current.messages.length
+		? current.title
+		: makeTitle(prompt?.title ?? task?.title ?? (text || documents[0]?.name || ''))
+	const asked = [...current.messages, { role: 'user' as const, content: input }]
+	const times = { ...current.times, [current.messages.length]: new Date().toISOString() }
+	const tasks = task ? { ...current.tasks, [current.messages.length]: task.id } : current.tasks
+	let latest: Conversation = current
+	const keep = async (next: Conversation) => {
+		latest = next
+		await hooks.save(next)
+	}
+	try {
+		// Saved before anything can fail, because the composer has already been cleared.
+		await keep({
+			...current,
+			title,
+			updatedAt: new Date().toISOString(),
+			messages: asked,
+			times,
+			tasks,
+			documents: allDocuments,
+		})
+
+		hooks.onStartingModel?.(true)
+		const {
+			client: model,
+			contextTokens,
+			searchKnowledgeFirst,
+		} = await deps.getModel().finally(() => hooks.onStartingModel?.(false))
+		waited.startMs = Math.round(performance.now() - sentAt)
+		const room = textBudget(contextTokens)
+		hooks.onBudget?.(room)
+		// A draft needs every fact it can get. A question needs the passages that answer it.
+		const share = task?.tools === 'none' ? 1 : QUESTION_SHARE
+		const each = Math.floor((room.document * share) / Math.max(1, allDocuments.length))
+		const blocks = allDocuments.map((document) => ({
+			name: document.name,
+			...documentBlock(document, passageQuery(request, current.messages), each),
+			truncated: document.truncated,
+		}))
+		const attachments = blocks.map((block) => block.text).join('\n\n')
+		const seen = new Set<string>()
+		// A ready-made task gets notes as context, not as tools that distract a small model from the job.
+		const team = deps.team
+		tools = await connectTools(
+			host,
+			deps.settings.addons,
+			!task,
+			(name) => {
+				if (!seen.has(name)) hooks.onProblem?.(name)
+				seen.add(name)
+			},
+			team,
+		)
+
+		const memory = await buildMemoryContext(
+			host.memory,
+			room.memory,
+			team ? { notes: team.notes, question: passageQuery(text, current.messages) } : undefined,
+		).catch(() => '')
+		const context = [
+			`Today is ${new Date().toISOString().slice(0, 10)}.`,
+			connectedServices(deps.settings.addons),
+			options.context ?? '',
+			memory,
+		]
+			.filter(Boolean)
+			.join('\n\n')
+		// Open chat only: a ready-made task has its own material and every token spoken for. The model
+		// decides whether to search: passages found for "thanks" or "draft an email" pull a small model's
+		// answer off course, and a knowledge base of field practice has nothing for them anyway. A model
+		// that seldom asks, or answers without reading what a search it asked for found, is searched for.
+		const knowledge =
+			!task && text.trim() && deps.settings.addons.some((addon) => addon.enabled)
+				? {
+						query: passageQuery(text, current.messages),
+						maxChars: room.knowledge,
+						onRequest: !searchKnowledgeFirst,
+					}
+				: undefined
+		const history: ChatMessage[] = fitHistory(
+			current.messages,
+			Math.max(
+				0,
+				room.input -
+					room.tools -
+					input.length -
+					attachments.length -
+					context.length -
+					(knowledge?.maxChars ?? 0),
+			),
+		)
+
+		// Nothing appears until the model has read it, which on a long document is most of the wait.
+		hooks.onReadingDocument?.(allDocuments.length > 0)
+		const run = await runTask({
+			model,
+			tools,
+			profile: task ? taskFileToProfile(task) : CHAT_PROFILE,
+			input,
+			attachments,
+			knowledge,
+			sourceTexts: allDocuments.map((document) => document.text),
+			context,
+			history,
+			maxToolResultChars: room.toolResult,
+			maxInputChars: room.input - room.tools,
+			maxToolChars: room.tools,
+			maxOutputTokens: room.output,
+			confirmWrite: hooks.confirmWrite,
+			signal: hooks.signal,
+			onText: (piece) => {
+				waited.firstWordMs ??= Math.round(performance.now() - sentAt)
+				hooks.onReadingDocument?.(false)
+				written += piece
+				hooks.onText?.(piece)
+			},
+			onEvent: (event) => {
+				if (event.type === 'tool_call') {
+					// A new step starts, so what was shown belongs to the step before.
+					hooks.onReadingDocument?.(false)
+					written = ''
+					hooks.onToolCall?.(event.tool)
+				}
+				if (event.type === 'turn') hooks.onTurn?.()
+			},
+		})
+
+		let error = run.status === 'model_error' ? (run.error ?? 'The model did not answer.') : null
+
+		// Older messages were left out of what the model saw, but stay in what is kept.
+		const earlier = current.messages.slice(0, current.messages.length - history.length)
+		const messages = [...earlier, ...run.messages]
+		// Stopping keeps what was already written: it may be all the person wanted.
+		if (run.status === 'cancelled' && written.trim())
+			messages.push({ role: 'assistant', content: written })
+		const notices = { ...current.notices }
+		let notice: AnswerNotice | null = null
+		if (run.answer) {
+			notice = {
+				unsourcedDates: run.unsourcedDates,
+				unsourcedLinks: run.unsourcedLinks,
+				checkFigures: Boolean(task) && task?.tools === 'none',
+				figureProblems: run.figureProblems,
+				stopped: STOPPED[run.status] ?? null,
+				earlierLeftOut: history.length < current.messages.length,
+				partlyRead: blocks.filter((block) => block.cut).map((block) => block.name),
+				neverRead: blocks.filter((block) => block.truncated).map((block) => block.name),
+				cutOff: run.cutOff,
+				toolsDidNotFit: run.toolsDidNotFit,
+				knowledgeEntries: run.knowledgeEntries,
+				knowledgeUnavailable: run.knowledgeUnavailable,
+				timing: {
+					...waited,
+					totalMs: Math.round(performance.now() - sentAt),
+					knowledgeMs: run.knowledgeMs,
+					toolMs: run.toolMs,
+					toolCalls: run.toolCalls,
+					modelCalls: run.modelCalls,
+					hiddenMs: hiddenMs(),
+				},
+			}
+			notices[messages.length - 1] = notice
+			times[messages.length - 1] = new Date().toISOString()
+		} else if (STOPPED[run.status]) {
+			error = STOPPED[run.status] ?? null
+		}
+		await keep({
+			...current,
+			title,
+			updatedAt: new Date().toISOString(),
+			messages,
+			notices,
+			times,
+			tasks,
+			documents: allDocuments,
+		})
+		return { conversation: latest, error, answer: run.answer ?? null, notice }
+	} catch (err) {
+		return {
+			conversation: latest,
+			error: err instanceof Error ? err.message : String(err),
+			answer: null,
+			notice: null,
+		}
+	} finally {
+		document.removeEventListener('visibilitychange', onVisibility)
+		hooks.onReadingDocument?.(false)
+		await tools?.close().catch(() => {})
+	}
+}
+
 export function useChat(deps: ChatDeps, conversationId: string) {
 	const { host } = deps
 	const depsRef = useRef(deps)
@@ -249,31 +547,10 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 		async (text: string, options: SendOptions = {}, from?: Conversation) => {
 			// Retry starts from the conversation without its last question, which this render has not seen yet.
 			const current = from ?? conversation
-			const { task, documents = [], prompt } = options
-			const request = [prompt?.text, text].filter(Boolean).join('\n\n')
-			const named = documents.length
-				? `[Attached: ${documents.map((document) => document.name).join(', ')}]`
-				: ''
-			// What is kept and shown. The documents themselves go with each message, as far as it needs them.
-			const input = [request, named].filter(Boolean).join('\n\n')
-			// The same file attached twice would only divide the room between two copies.
-			const allDocuments = [...(current.documents ?? []), ...documents].filter(
-				(document, index, all) =>
-					all.findIndex((other) => other.name === document.name && other.text === document.text) ===
-					index,
-			)
-			if (!input.trim()) return
-			// Checked here and not left to the model, which may answer from memory with calls that do not exist.
-			if (
-				task?.needs === 'addon' &&
-				!depsRef.current.settings.addons.some((addon) => addon.enabled)
-			) {
-				setError(
-					`${task.title} needs a connected tool. Add one under Connectors, such as a search service or Action Network Worldwide.`,
-				)
-				return
-			}
-
+			if (!text.trim() && !options.prompt?.text?.trim() && !options.documents?.length) return
+			// Said before anything starts, as it always was: nothing is sent, so nothing is busy.
+			const missing = missingConnector(depsRef.current, options.task)
+			if (missing) return setError(missing)
 			setBusy(true)
 			depsRef.current.onBusyChange?.(true)
 			setError(null)
@@ -283,224 +560,54 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 			const controller = new AbortController()
 			abort.current = controller
 
-			let tools: ToolSource | null = null
 			let written = ''
-			// Where the wait went, kept with the answer so slow answers can be looked into.
-			const sentAt = performance.now()
-			const waited = { startMs: 0, firstWordMs: null as number | null }
-			// A hidden window may be slowed down by the computer, which would look like a slow answer.
-			const hidden = { ms: 0, since: document.hidden ? sentAt : (null as number | null) }
-			const onVisibility = () => {
-				if (document.hidden) hidden.since ??= performance.now()
-				else if (hidden.since !== null) {
-					hidden.ms += performance.now() - hidden.since
-					hidden.since = null
-				}
-			}
-			document.addEventListener('visibilitychange', onVisibility)
-			const hiddenMs = () =>
-				Math.round(hidden.ms + (hidden.since === null ? 0 : performance.now() - hidden.since)) // Shown in batches: every small piece redrawing the page is too much for a slow computer.
+			// Shown in batches: every small piece redrawing the page is too much for a slow computer.
 			let flushTimer: ReturnType<typeof setTimeout> | null = null
 			const flush = () => {
 				flushTimer = null
 				setStreaming(written)
 			}
-			const title = current.messages.length
-				? current.title
-				: makeTitle(prompt?.title ?? task?.title ?? (text || documents[0]?.name || ''))
-			const asked = [...current.messages, { role: 'user' as const, content: input }]
-			const times = { ...current.times, [current.messages.length]: new Date().toISOString() }
-			const tasks = task ? { ...current.tasks, [current.messages.length]: task.id } : current.tasks
-			try {
-				// Saved before anything can fail, because the composer has already been cleared.
-				await save({
-					...current,
-					title,
-					updatedAt: new Date().toISOString(),
-					messages: asked,
-					times,
-					tasks,
-					documents: allDocuments,
-				})
-
-				setStartingModel(true)
-				const {
-					client: model,
-					contextTokens,
-					searchKnowledgeFirst,
-				} = await depsRef.current.getModel().finally(() => setStartingModel(false))
-				waited.startMs = Math.round(performance.now() - sentAt)
-				const room = textBudget(contextTokens)
-				setBudget(room)
-				// A draft needs every fact it can get. A question needs the passages that answer it.
-				const share = task?.tools === 'none' ? 1 : QUESTION_SHARE
-				const each = Math.floor((room.document * share) / Math.max(1, allDocuments.length))
-				const blocks = allDocuments.map((document) => ({
-					name: document.name,
-					...documentBlock(document, passageQuery(request, current.messages), each),
-					truncated: document.truncated,
-				}))
-				const attachments = blocks.map((block) => block.text).join('\n\n')
-				const seen = new Set<string>()
-				// A ready-made task gets notes as context, not as tools that distract a small model from the job.
-				const team = depsRef.current.team
-				tools = await connectTools(
-					host,
-					depsRef.current.settings.addons,
-					!task,
-					(name) => {
-						if (!seen.has(name)) setProblems((known) => [...known, name])
-						seen.add(name)
-					},
-					team,
-				)
-				const confirmWrite: ConfirmWrite = (request) =>
-					new Promise((resolve) => {
-						const onAbort = () => {
+			const confirmWrite: ConfirmWrite = (request) =>
+				new Promise((resolve) => {
+					const onAbort = () => {
+						setPendingWrite(null)
+						resolve(false)
+					}
+					controller.signal.addEventListener('abort', onAbort, { once: true })
+					setPendingWrite({
+						...request,
+						resolve: (approved) => {
+							controller.signal.removeEventListener('abort', onAbort)
 							setPendingWrite(null)
-							resolve(false)
-						}
-						controller.signal.addEventListener('abort', onAbort, { once: true })
-						setPendingWrite({
-							...request,
-							resolve: (approved) => {
-								controller.signal.removeEventListener('abort', onAbort)
-								setPendingWrite(null)
-								resolve(approved)
-							},
-						})
+							resolve(approved)
+						},
 					})
-
-				const memory = await buildMemoryContext(
-					host.memory,
-					room.memory,
-					team ? { notes: team.notes, question: passageQuery(text, current.messages) } : undefined,
-				).catch(() => '')
-				const context = [
-					`Today is ${new Date().toISOString().slice(0, 10)}.`,
-					connectedServices(depsRef.current.settings.addons),
-					memory,
-				]
-					.filter(Boolean)
-					.join('\n\n')
-				// Open chat only: a ready-made task has its own material and every token spoken for. The model
-				// decides whether to search: passages found for "thanks" or "draft an email" pull a small model's
-				// answer off course, and a knowledge base of field practice has nothing for them anyway. A model
-				// that seldom asks, or answers without reading what a search it asked for found, is searched for.
-				const knowledge =
-					!task && text.trim() && depsRef.current.settings.addons.some((addon) => addon.enabled)
-						? {
-								query: passageQuery(text, current.messages),
-								maxChars: room.knowledge,
-								onRequest: !searchKnowledgeFirst,
-							}
-						: undefined
-				const history: ChatMessage[] = fitHistory(
-					current.messages,
-					Math.max(
-						0,
-						room.input -
-							room.tools -
-							input.length -
-							attachments.length -
-							context.length -
-							(knowledge?.maxChars ?? 0),
-					),
-				)
-
-				// Nothing appears until the model has read it, which on a long document is most of the wait.
-				setReadingDocument(allDocuments.length > 0)
-				const run = await runTask({
-					model,
-					tools,
-					profile: task ? taskFileToProfile(task) : CHAT_PROFILE,
-					input,
-					attachments,
-					knowledge,
-					sourceTexts: allDocuments.map((document) => document.text),
-					context,
-					history,
-					maxToolResultChars: room.toolResult,
-					maxInputChars: room.input - room.tools,
-					maxToolChars: room.tools,
-					maxOutputTokens: room.output,
-					confirmWrite,
+				})
+			try {
+				const result = await answerRequest(depsRef.current, current, text, options, {
 					signal: controller.signal,
+					confirmWrite,
+					save,
+					onStartingModel: setStartingModel,
+					onBudget: setBudget,
+					onReadingDocument: setReadingDocument,
+					onProblem: (name) => setProblems((known) => [...known, name]),
 					onText: (piece) => {
-						waited.firstWordMs ??= Math.round(performance.now() - sentAt)
-						setReadingDocument(false)
 						written += piece
 						flushTimer ??= setTimeout(flush, 60)
 					},
-					onEvent: (event) => {
-						if (event.type === 'tool_call') {
-							// A new step starts, so what was shown belongs to the step before.
-							setReadingDocument(false)
-							written = ''
-							if (flushTimer) clearTimeout(flushTimer)
-							flushTimer = null
-							setStreaming('')
-							setActivity(event.tool)
-						}
-						if (event.type === 'turn') setActivity(null)
+					onToolCall: (tool) => {
+						written = ''
+						if (flushTimer) clearTimeout(flushTimer)
+						flushTimer = null
+						setStreaming('')
+						setActivity(tool)
 					},
+					onTurn: () => setActivity(null),
 				})
-
-				if (run.status === 'model_error') setError(run.error ?? 'The model did not answer.')
-
-				// Older messages were left out of what the model saw, but stay in what is kept.
-				const earlier = current.messages.slice(0, current.messages.length - history.length)
-				const messages = [...earlier, ...run.messages]
-				// Stopping keeps what was already written: it may be all the person wanted.
-				if (run.status === 'cancelled' && written.trim())
-					messages.push({ role: 'assistant', content: written })
-				const notices = { ...current.notices }
-				if (run.answer) {
-					const notice: AnswerNotice = {
-						unsourcedDates: run.unsourcedDates,
-						unsourcedLinks: run.unsourcedLinks,
-						checkFigures: Boolean(task) && task?.tools === 'none',
-						figureProblems: run.figureProblems,
-						stopped: STOPPED[run.status] ?? null,
-						earlierLeftOut: history.length < current.messages.length,
-						partlyRead: blocks.filter((block) => block.cut).map((block) => block.name),
-						neverRead: blocks.filter((block) => block.truncated).map((block) => block.name),
-						cutOff: run.cutOff,
-						toolsDidNotFit: run.toolsDidNotFit,
-						knowledgeEntries: run.knowledgeEntries,
-						knowledgeUnavailable: run.knowledgeUnavailable,
-						timing: {
-							...waited,
-							totalMs: Math.round(performance.now() - sentAt),
-							knowledgeMs: run.knowledgeMs,
-							toolMs: run.toolMs,
-							toolCalls: run.toolCalls,
-							modelCalls: run.modelCalls,
-							hiddenMs: hiddenMs(),
-						},
-					}
-					notices[messages.length - 1] = notice
-					times[messages.length - 1] = new Date().toISOString()
-				} else if (STOPPED[run.status]) {
-					setError(STOPPED[run.status] ?? null)
-				}
-				await save({
-					...current,
-					title,
-					updatedAt: new Date().toISOString(),
-					messages,
-					notices,
-					times,
-					tasks,
-					documents: allDocuments,
-				})
-			} catch (err) {
-				setError(err instanceof Error ? err.message : String(err))
+				if (result.error) setError(result.error)
 			} finally {
 				if (flushTimer) clearTimeout(flushTimer)
-				document.removeEventListener('visibilitychange', onVisibility)
-				setReadingDocument(false)
-				await tools?.close().catch(() => {})
 				depsRef.current.onBusyChange?.(false)
 				setStreaming('')
 				setActivity(null)
@@ -508,7 +615,7 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 				abort.current = null
 			}
 		},
-		[conversation, host, save],
+		[conversation, save],
 	)
 
 	const stop = useCallback(() => abort.current?.abort(), [])

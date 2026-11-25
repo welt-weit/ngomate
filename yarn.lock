@@ -745,6 +745,7 @@ __metadata:
     "@tauri-apps/api": "npm:^2.10.1"
     "@tauri-apps/cli": "npm:^2.10.1"
     "@tauri-apps/plugin-deep-link": "npm:^2"
+    "@tauri-apps/plugin-notification": "npm:^2"
     "@tauri-apps/plugin-opener": "npm:^2.5.0"
     "@tauri-apps/plugin-process": "npm:^2"
     "@tauri-apps/plugin-updater": "npm:^2"
@@ -1478,6 +1479,15 @@ __metadata:
   dependencies:
     "@tauri-apps/api": "npm:^2.12.0"
   checksum: 10c0/306401227844daf21f16c550becb939f962aba0d69081e528a4b8523afb78551b9c18704a5ff1e10baf5ca18b46a1a2c0a6b4c0306c3cee130cf4e016219f1b2
+  languageName: node
+  linkType: hard
+
+"@tauri-apps/plugin-notification@npm:^2":
+  version: 2.8.1
+  resolution: "@tauri-apps/plugin-notification@npm:2.8.1"
+  dependencies:
+    "@tauri-apps/api": "npm:^2.12.0"
+  checksum: 10c0/33fbc6917b51f4ee97186c2b70a9505e88b7abf85e847fcb1d59f461f642812f31db4871332da9b3f8b2213f363691a04da153e1891a9ff30dbf14ef7cb5f0d4
   languageName: node
   linkType: hard
 

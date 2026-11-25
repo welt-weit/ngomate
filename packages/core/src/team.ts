@@ -4,7 +4,8 @@ import { wordsOf } from './toolChoice.js'
 export const TEAM_FILE = 'ngomate-team.json'
 const TEAM_FORMAT = 1
 
-export type TeamArea = 'notes' | 'tasks'
+/** Jobs the team shares sit beside its tasks, and count with them toward the tasks limit. */
+export type TeamArea = 'notes' | 'tasks' | 'jobs' | 'job-states'
 
 export type TeamLimits = {
 	/** All team notes together. */
@@ -180,7 +181,7 @@ export function teamLimitProblem(
 	text: string,
 ): string | null {
 	const size = bytesOf(text)
-	const label = area === 'notes' ? 'Team memory' : 'Team tasks'
+	const label = area === 'notes' ? 'Team memory' : area === 'tasks' ? 'Team tasks' : 'Team jobs'
 	if (area === 'notes' && size > limits.noteBytes) {
 		return `This note is ${formatTeamBytes(size)}, and a team note can be at most ${formatTeamBytes(limits.noteBytes)}. Shorten it, or split it into several notes.`
 	}
@@ -301,7 +302,7 @@ const LIST_REUSE_MS = 30_000
 
 /** Reads at once when notes are fetched: on S3 or WebDAV each one is a request, and one after another
  * a large team keeps the first answer waiting. */
-const READS_AT_ONCE = 8
+export const READS_AT_ONCE = 8
 
 /** A note as last read: the version it was read at and its text. */
 export type TeamNoteCopy = { version: string; text: string }
@@ -315,7 +316,7 @@ export interface TeamNoteCopies {
 	save(notes: Record<string, TeamNoteCopy>): Promise<void>
 }
 
-async function eachAtMost<T>(items: T[], width: number, run: (item: T) => Promise<unknown>) {
+export async function eachAtMost<T>(items: T[], width: number, run: (item: T) => Promise<unknown>) {
 	let next = 0
 	const worker = async () => {
 		while (next < items.length) await run(items[next++] as T)
@@ -522,10 +523,19 @@ function answer(result: { text: string; isError: boolean }, area: TeamArea, name
 
 const version = (value: unknown) => (typeof value === 'string' && value ? value : null)
 
+/**
+ * A connector's team tools hold notes and tasks only (README, "A connector as team storage"). Asked for
+ * jobs, a server that ignores the area would answer with its notes, and a job removed would be a note.
+ */
+function onlyNotesAndTasks(area: TeamArea) {
+	if (area !== 'notes' && area !== 'tasks') throw new Error('A connector does not keep team jobs.')
+}
+
 /** A team's notes and tasks kept by a connector that offers the team memory tools. */
 export function createConnectorTeamStore(source: ToolCaller): TeamStore {
 	return {
 		async list(area) {
+			onlyNotesAndTasks(area)
 			const data = answer(await source.callTool(TEAM_TOOLS.list, { area }), area, '')
 			const items = Array.isArray(data)
 				? data
@@ -546,6 +556,7 @@ export function createConnectorTeamStore(source: ToolCaller): TeamStore {
 			})
 		},
 		async read(area, name) {
+			onlyNotesAndTasks(area)
 			const result = await source.callTool(TEAM_TOOLS.read, { area, name })
 			if (result.isError) {
 				try {
@@ -557,6 +568,7 @@ export function createConnectorTeamStore(source: ToolCaller): TeamStore {
 			return { text: data.text, version: version(data.version) }
 		},
 		async write(area, name, text, expected) {
+			onlyNotesAndTasks(area)
 			const data = answer(
 				await source.callTool(TEAM_TOOLS.write, { area, name, text, expectedVersion: expected }),
 				area,
@@ -565,6 +577,7 @@ export function createConnectorTeamStore(source: ToolCaller): TeamStore {
 			return { version: isRecord(data) ? version(data.version) : null }
 		},
 		async remove(area, name, expected) {
+			onlyNotesAndTasks(area)
 			answer(
 				await source.callTool(TEAM_TOOLS.remove, { area, name, expectedVersion: expected }),
 				area,

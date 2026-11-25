@@ -1,7 +1,9 @@
+import { type JobOutcome, type JobRun, describeChange, describeSchedule } from '@ngomate/core'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { ICONS, Icon } from './icons.js'
 import { startConversationDrag } from './TabBar.js'
+import { ICONS, Icon } from './icons.js'
 import { usePrimitives } from './primitives.js'
+import type { ListedJob } from './useJobs.js'
 
 export type WorkGroup = 'chats' | 'tasks' | 'jobs'
 
@@ -18,6 +20,81 @@ export type WorkTask = {
 }
 
 type Conversation = { id: string; title: string; updatedAt: string }
+
+/** What the Jobs list needs, and what it can ask for. */
+export type WorkJobs = {
+	list: ListedJob[]
+	/** The jobs have been read once: before that, no run can be told from a chat. */
+	loaded: boolean
+	running: string | null
+	/** Why the last thing asked of the jobs did not happen. */
+	problem: string | null
+	onNew: () => void
+	onRun: (id: string) => void
+	onPause: (id: string, paused: boolean) => void
+	onDelete: (id: string) => void
+	onOpenRun: (id: string, conversationId: string) => void
+	/** A held run whose team task changed: the person reads the task before it runs again. */
+	onReadTask: (id: string) => void
+	/** Makes or declines a change a run asked for. */
+	onDecide: (id: string, ranAt: string, index: number, allow: boolean) => void
+}
+
+/** What a run came to, in words: one waiting on another member says whose decision it is. */
+function outcomeLabel(run: JobRun, decidable: boolean): string {
+	const outcome = outcomeOf(run)
+	return outcome === 'waiting' && !decidable
+		? `Waiting for ${run.by ?? 'another member'}`
+		: OUTCOME[outcome]
+}
+
+/** What a run came to, now: a run whose changes were all decided no longer waits. */
+function outcomeOf(run: JobRun): JobOutcome {
+	if (run.outcome === 'waiting' && !run.changes?.some((change) => change.decision === 'waiting'))
+		return 'done'
+	return run.outcome
+}
+
+const OUTCOME: Record<JobOutcome, string> = {
+	done: 'Done',
+	warnings: 'Check it',
+	waiting: 'Needs you',
+	held: 'On hold',
+	failed: 'Failed',
+}
+
+const shortTime = (iso: string) =>
+	new Date(iso).toLocaleString(undefined, {
+		weekday: 'short',
+		day: 'numeric',
+		month: 'short',
+		hour: '2-digit',
+		minute: '2-digit',
+	})
+
+/** A team job made in another time zone says so; in this computer's own zone it says nothing. */
+const zoneNote = (zone: string | undefined) =>
+	zone && zone !== Intl.DateTimeFormat().resolvedOptions().timeZone ? ` (${zone} time)` : ''
+
+/** A run's time, short enough for the panel's width. */
+const runTime = (iso: string) =>
+	new Date(iso).toLocaleString(undefined, {
+		day: 'numeric',
+		month: 'short',
+		hour: '2-digit',
+		minute: '2-digit',
+	})
+
+/** A job's run is kept as the conversation `job-<id>-run-<time>-<random>`: the id, or null for a chat. */
+export function jobOfRun(conversationId: string): string | null {
+	return conversationId.match(/^job-(.+)-run-[a-z0-9]+-[a-z0-9]+$/)?.[1] ?? null
+}
+
+/** A sentence that ends in a full stop, whatever it was given. */
+const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`)
+
+/** Runs shown under a job. Older ones stay in its file and in Find. */
+const RUNS_SHOWN = 5
 
 const GROUPS: { id: WorkGroup; label: string }[] = [
 	{ id: 'chats', label: 'Chats' },
@@ -79,6 +156,7 @@ export function WorkPanel({
 	findIn,
 	onOpenNotes,
 	findRequest,
+	jobs,
 }: {
 	conversations: Conversation[]
 	shownId: string | null
@@ -99,6 +177,8 @@ export function WorkPanel({
 	onOpenNotes: () => void
 	/** Counts up each time the person asks to find something, from anywhere. */
 	findRequest: number
+	/** Left out when the host keeps no jobs. */
+	jobs?: WorkJobs
 }) {
 	const { Button, Input } = usePrimitives()
 	const [query, setQuery] = useState('')
@@ -217,6 +297,183 @@ export function WorkPanel({
 		</section>
 	)
 
+	const jobSection = (item: ListedJob, jobs: WorkJobs) => {
+		const { job, state } = item
+		const title = job?.title ?? item.id
+		// A team job's run is kept as a conversation only on the computer that ran it; elsewhere its
+		// result is the team note it wrote.
+		const here = (run: JobRun) =>
+			Boolean(run.conversationId) &&
+			conversations.some((conversation) => conversation.id === run.conversationId)
+		const latest = state?.runs.find(here)
+		const latestNote = state?.runs.find((run) => run.note)
+		// The rule the runner itself goes by, so the list never says one is running that would be taken over.
+		const claimedBy = item.claimedBy
+		// This person's own runs are decided anywhere; a team run's change only where it ran, through that
+		// computer's connectors.
+		const decidable = (run: JobRun) => !item.team || here(run)
+		const name = item.team ? `${title} (team)` : title
+		const status = !job
+			? `This job's file cannot be used: ${sentence(item.problem ?? '')} Delete it to remove it.`
+			: jobs.running === item.key
+				? 'Running now…'
+				: claimedBy
+					? `Running on ${claimedBy}'s computer…`
+					: state?.paused
+						? `Paused. ${describeSchedule(job.schedule)}.`
+						: state?.problem
+							? `Could not run: ${sentence(state.problem)} Tries again ${shortTime(state.nextDue)}.`
+							: `${describeSchedule(job.schedule)}${zoneNote(job.zone)}. Next: ${state ? shortTime(state.nextDue) : 'not known'}.`
+		const held = state?.runs[0]?.outcome === 'held' ? state.runs[0] : null
+		const by = (run: JobRun) => (item.team && run.by ? ` · ${run.by}` : '')
+		return (
+			<section className="ngm-side-section" key={item.key} aria-label={name}>
+				<div className="ngm-side-item">
+					<Button
+						variant="nav"
+						// Opens what it made. Starting a run is Run now's alone, so a click on a name never asks
+						// the model anything.
+						title={
+							latest
+								? 'Open its latest result'
+								: latestNote
+									? 'Open the notes it writes'
+									: 'No result yet'
+						}
+						disabled={!latest && !latestNote}
+						onClick={() =>
+							latest?.conversationId
+								? jobs.onOpenRun(item.key, latest.conversationId)
+								: onOpenNotes()
+						}
+					>
+						<strong>{title}</strong>
+						{item.team && <span className="ngm-muted"> · team</span>}
+					</Button>
+					<div className="ngm-side-actions">
+						{/* A paused job is resumed first, so the two play buttons are never side by side. */}
+						{job && !state?.paused && (
+							<Button
+								variant="quiet"
+								className="ngm-icon-button"
+								aria-label={`Run ${name} now`}
+								title={
+									jobs.running !== null
+										? 'Another job is running'
+										: claimedBy
+											? `Running on ${claimedBy}'s computer`
+											: 'Run now'
+								}
+								disabled={jobs.running !== null || claimedBy !== null}
+								onClick={() => jobs.onRun(item.key)}
+							>
+								<Icon path={ICONS.play} size={14} />
+							</Button>
+						)}
+						{job && state && (
+							<Button
+								variant="quiet"
+								className="ngm-icon-button"
+								aria-label={`${state.paused ? 'Resume' : 'Pause'} ${name}`}
+								title={state.paused ? 'Resume' : 'Pause'}
+								onClick={() => jobs.onPause(item.key, !state.paused)}
+							>
+								<Icon path={state.paused ? ICONS.play : ICONS.pause} size={14} />
+							</Button>
+						)}
+						<Button
+							variant="quiet"
+							className="ngm-icon-button"
+							aria-label={`Delete ${name}`}
+							title={item.team ? 'Delete it for the whole team' : 'Delete'}
+							onClick={() => jobs.onDelete(item.key)}
+						>
+							<Icon path={ICONS.close} size={14} />
+						</Button>
+					</div>
+				</div>
+				<p className="ngm-side-note">{status}</p>
+				{held?.reason && <p className="ngm-side-note">{held.reason}</p>}
+				{held?.waitsFor === 'task' && (
+					<Button variant="nav" onClick={() => jobs.onReadTask(item.key)}>
+						Read the changed task
+					</Button>
+				)}
+				{state?.runs.slice(0, RUNS_SHOWN).flatMap((run) =>
+					(run.changes ?? []).map((change, index) =>
+						change.decision !== 'waiting' ? null : decidable(run) ? (
+							<div className="ngm-job-change" key={`${run.ranAt}/${index}`}>
+								{/* In full: what is allowed here is made exactly as asked. */}
+								<p className="ngm-side-note">
+									Asked to change: {describeChange(change, Number.POSITIVE_INFINITY)}
+								</p>
+								{change.error && (
+									<p className="ngm-error" role="alert">
+										{change.error}
+									</p>
+								)}
+								<div className="ngm-row">
+									<Button
+										variant="primary"
+										aria-label={`Allow ${change.tool}`}
+										onClick={() => jobs.onDecide(item.key, run.ranAt, index, true)}
+									>
+										Allow
+									</Button>
+									<Button
+										aria-label={`Don't allow ${change.tool}`}
+										onClick={() => jobs.onDecide(item.key, run.ranAt, index, false)}
+									>
+										Don't allow
+									</Button>
+								</div>
+							</div>
+						) : (
+							// Made through the connectors of the computer that ran it, so decided there.
+							<p className="ngm-side-note" key={`${run.ranAt}/${index}`}>
+								Asked to change: {describeChange(change)}. Waiting for{' '}
+								{run.by ?? 'the member who ran it'}.
+							</p>
+						),
+					),
+				)}
+				{state?.runs
+					.filter((run) => run.outcome !== 'held')
+					.slice(0, RUNS_SHOWN)
+					.map((run) =>
+						here(run) ? (
+							<Button
+								variant="nav"
+								key={run.ranAt}
+								title={run.reason ?? (run.note ? `Written to the note ${run.note}` : undefined)}
+								onClick={() => run.conversationId && jobs.onOpenRun(item.key, run.conversationId)}
+							>
+								{runTime(run.ranAt)} · {outcomeLabel(run, decidable(run))}
+								{by(run)}
+								{!item.team && !run.seen && <span className="ngm-muted"> · new</span>}
+							</Button>
+						) : run.note ? (
+							<Button
+								variant="nav"
+								key={run.ranAt}
+								title={`Written to the ${item.team || job?.destination.kind === 'team-note' ? 'team note' : 'note'} ${run.note}`}
+								onClick={onOpenNotes}
+							>
+								{runTime(run.ranAt)} · {outcomeLabel(run, decidable(run))}
+								{by(run)}
+							</Button>
+						) : (
+							<p className="ngm-side-note" key={run.ranAt}>
+								{runTime(run.ranAt)} · {outcomeLabel(run, decidable(run))}
+								{by(run)}
+								{run.reason ? `: ${run.reason}` : ''}
+							</p>
+						),
+					)}
+			</section>
+		)
+	}
+
 	let list: ReactNode
 	if (finding) {
 		const text = found?.query === finding ? found.text : null
@@ -254,8 +511,15 @@ export function WorkPanel({
 				<p className="ngm-work-empty">Nothing found for “{finding}”.</p>
 			)
 	} else if (group === 'chats') {
-		list = conversations.length ? (
-			byDay(conversations).map((day) => section(day.label, day.items.map(chatRow)))
+		// A job's runs are listed under it; once the job is deleted they are chats like any other. Until
+		// the jobs are read, a run is left out rather than shown for a moment and taken away again.
+		const jobIds = new Set(jobs?.list.map((item) => item.id))
+		const chats = conversations.filter((conversation) => {
+			const job = jobOfRun(conversation.id)
+			return job === null || (jobs?.loaded === true && !jobIds.has(job))
+		})
+		list = chats.length ? (
+			byDay(chats).map((day) => section(day.label, day.items.map(chatRow)))
 		) : (
 			<p className="ngm-work-empty">Your conversations will be listed here.</p>
 		)
@@ -263,12 +527,30 @@ export function WorkPanel({
 		list = taskGroups
 			.filter((taskGroup) => taskGroup.tasks.length)
 			.map((taskGroup) => section(taskGroup.title, taskGroup.tasks.map(taskRow)))
-	} else {
+	} else if (!jobs) {
 		list = (
 			<p className="ngm-work-empty">
-				Jobs are tasks that run on their own, such as a weekly status every Monday. They will be
-				listed here.
+				Jobs are tasks that run on their own, such as a weekly status every Monday. This app cannot
+				run jobs.
 			</p>
+		)
+	} else {
+		list = (
+			<>
+				<Button onClick={jobs.onNew}>New job…</Button>
+				{jobs.problem && (
+					<p className="ngm-error" role="alert">
+						{jobs.problem}
+					</p>
+				)}
+				{jobs.list.length === 0 && (
+					<p className="ngm-work-empty">
+						A job runs a ready-made task on a schedule, such as new funding every Monday, while this
+						app is open, and writes the result to a note.
+					</p>
+				)}
+				{jobs.list.map((item) => jobSection(item, jobs))}
+			</>
 		)
 	}
 

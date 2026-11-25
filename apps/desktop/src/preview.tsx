@@ -1,3 +1,4 @@
+import { nextOccurrence, parseSchedule } from '@ngomate/core'
 import { NgomateApp } from '@ngomate/ui'
 import { SAMPLE_CONVERSATION, createFakeHost, fakeModels } from '@ngomate/ui/preview'
 import '@ngomate/ui/default-theme.css'
@@ -24,6 +25,58 @@ function earlier(id: string, title: string, daysAgo: number) {
 	}
 }
 
+const DAY = 86_400_000
+const WEEKLY = parseSchedule('weekly mon 09:00')
+const nextMonday = nextOccurrence(WEEKLY, new Date())
+/** The Monday nine o'clock this many weeks before the next one. */
+const mondaysAgo = (weeks: number) => new Date(nextMonday.getTime() - weeks * 7 * DAY).toISOString()
+
+/**
+ * A made-up weekly job with two runs: the newest not yet opened and asking for a change, the one before
+ * with something the checks found.
+ */
+const SAMPLE_JOB = {
+	text: [
+		'---',
+		'id: funding-this-week',
+		'title: Funding this week',
+		'task: find-opportunities',
+		'schedule: weekly mon 09:00',
+		'destination: team-note Funding this week',
+		'---',
+		'A made-up youth group working on clean water in two villages.',
+		'',
+	].join('\n'),
+	state: {
+		nextDue: nextMonday.toISOString(),
+		runs: [
+			{
+				dueAt: mondaysAgo(1),
+				ranAt: mondaysAgo(1),
+				outcome: 'waiting' as const,
+				conversationId: 'job-funding-this-week-run-2',
+				changes: [
+					{
+						tool: 'add_contact',
+						args: { name: 'Fictional Water Fund' },
+						decision: 'waiting' as const,
+					},
+				],
+				note: 'Funding this week',
+				seen: false,
+			},
+			{
+				dueAt: mondaysAgo(2),
+				ranAt: mondaysAgo(2),
+				outcome: 'warnings' as const,
+				conversationId: 'job-funding-this-week-run-1',
+				note: 'Funding this week',
+				seen: true,
+			},
+		],
+	},
+}
+
 export function start(root: Root) {
 	document.title = 'NGOmate preview'
 	const host = {
@@ -36,7 +89,10 @@ export function start(root: Root) {
 				earlier('volunteers', 'Volunteer rota for the food drive', 5),
 				earlier('budget', 'Budget question from the treasurer', 12),
 				earlier('calls', 'Open funding calls for school water', 30),
+				earlier('job-funding-this-week-run-2', 'Funding this week', 1),
+				earlier('job-funding-this-week-run-1', 'Funding this week', 8),
 			],
+			jobs: { 'funding-this-week': SAMPLE_JOB },
 			teams: ['Riverside Water Group', 'Coalition for Clean Rivers'],
 			models: fakeModels(),
 		}),

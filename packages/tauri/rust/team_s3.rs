@@ -1,4 +1,4 @@
-//! A team's notes and tasks in an S3-compatible bucket: AWS, R2, B2, Spaces, Wasabi, Hetzner, MinIO,
+//! A team's notes, tasks and jobs in an S3-compatible bucket: AWS, R2, B2, Spaces, Wasabi, Hetzner, MinIO,
 //! Garage. Requests are signed here (AWS Signature Version 4), and a write names the ETag it replaces,
 //! so a change someone else made is refused rather than overwritten, where the provider supports it.
 
@@ -9,6 +9,9 @@ use hmac::{Hmac, Mac};
 use reqwest::{Method, StatusCode};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// What the probe and the team file were always sent as.
+const MARKDOWN: &str = "text/markdown; charset=utf-8";
 
 pub struct S3 {
     endpoint: reqwest::Url,
@@ -221,7 +224,7 @@ impl S3 {
 
     fn key(area: Area, name: &str) -> Result<String> {
         check_name(name)?;
-        Ok(format!("{}/{name}.md", area.folder()))
+        Ok(format!("{}/{}", area.folder(), area.file_name(name)))
     }
 
     pub async fn list(&self, area: Area) -> Result<Vec<Entry>> {
@@ -240,7 +243,8 @@ impl S3 {
             let xml = response.text().await?;
             for block in blocks(&xml, "Contents") {
                 let Some(key) = tag(block, "Key").map(unescape) else { continue };
-                let Some(name) = key.strip_prefix(&prefix).and_then(|rest| rest.strip_suffix(".md")) else { continue };
+                let ending = format!(".{}", area.extension());
+                let Some(name) = key.strip_prefix(&prefix).and_then(|rest| rest.strip_suffix(&ending)) else { continue };
                 if check_name(name).is_err() {
                     continue;
                 }
@@ -275,13 +279,13 @@ impl S3 {
     }
 
     /// Only over the expected ETag, or only where nothing is, so two people cannot overwrite each other.
-    async fn put(&self, key: &str, text: &str, expected: Option<&str>) -> Result<Written> {
+    async fn put(&self, key: &str, text: &str, expected: Option<&str>, content_type: &str) -> Result<Written> {
         let condition = match expected {
             Some(version) => ("if-match", format!("\"{version}\"")),
             None => ("if-none-match", "*".to_string()),
         };
         let response = self
-            .send(Method::PUT, Some(key), &[], &[condition, ("content-type", "text/markdown; charset=utf-8".to_string())], text.as_bytes().to_vec())
+            .send(Method::PUT, Some(key), &[], &[condition, ("content-type", content_type.to_string())], text.as_bytes().to_vec())
             .await?;
         match response.status() {
             StatusCode::PRECONDITION_FAILED | StatusCode::CONFLICT => Ok(Written { version: None, conflict: true }),
@@ -295,7 +299,7 @@ impl S3 {
     }
 
     pub async fn write(&self, area: Area, name: &str, text: &str, expected: Option<&str>) -> Result<Written> {
-        self.put(&S3::key(area, name)?, text, expected).await
+        self.put(&S3::key(area, name)?, text, expected, area.content_type()).await
     }
 
     /// Checked against the version first, since not every provider honours a condition on delete.
@@ -314,8 +318,8 @@ impl S3 {
 
     pub async fn refuses_overwrites(&self) -> Result<bool> {
         const PROBE: &str = "ngomate-probe.txt";
-        self.put(PROBE, "probe", None).await?;
-        let refuses = self.put(PROBE, "probe", None).await?.conflict;
+        self.put(PROBE, "probe", None, MARKDOWN).await?;
+        let refuses = self.put(PROBE, "probe", None, MARKDOWN).await?.conflict;
         let gone = self.send(Method::DELETE, Some(PROBE), &[], &[], vec![]).await?;
         if !gone.status().is_success() {
             return Err(refused(gone).await);
@@ -328,7 +332,7 @@ impl S3 {
     }
 
     pub async fn write_team_file(&self, text: &str, expected: Option<&str>) -> Result<Written> {
-        self.put(TEAM_FILE, text, expected).await
+        self.put(TEAM_FILE, text, expected, MARKDOWN).await
     }
 }
 

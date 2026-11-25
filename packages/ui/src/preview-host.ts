@@ -1,7 +1,10 @@
 import {
 	type ChatRequest,
+	type JobState,
+	type JobStore,
 	type MemoryStore,
 	type ModelReply,
+	TeamConflict,
 	type TeamStore,
 	type ToolSource,
 	newTeamFile,
@@ -210,30 +213,57 @@ export type FakeHostOptions = {
 	models?: ModelHost
 	/** Teams this person is in, by name, each kept in a made-up shared folder. The first is active. */
 	teams?: string[]
+	/** Where the made-up teams keep their files: a synced folder, or a WebDAV server. */
+	teamStorage?: 'folder' | 'webdav'
+	/** Job files and their state, by id. */
+	jobs?: Record<string, { text: string; state?: JobState }>
 }
 
-/** Teams in memory, each in its own made-up folder, with a team file and nothing else. */
-function fakeTeams(names: string[]): TeamHost {
+/** Jobs in memory, as the desktop app keeps them in files. */
+export function memoryJobStore(initial: FakeHostOptions['jobs'] = {}): JobStore {
+	const jobs = new Map(
+		Object.entries(initial).map(([id, job]) => [id, { text: job.text, state: job.state ?? null }]),
+	)
+	return {
+		list: async () => [...jobs].map(([id, job]) => ({ id, ...job })),
+		write: async (id, text) => void jobs.set(id, { text, state: jobs.get(id)?.state ?? null }),
+		update: async (id, change) => {
+			const job = jobs.get(id)
+			const next = change(job?.state ?? null)
+			if (!job || !next) return null
+			jobs.set(id, { ...job, state: next })
+			return next
+		},
+		remove: async (id) => void jobs.delete(id),
+	}
+}
+
+/** Teams in memory, each in its own made-up place, with a team file and nothing else. */
+function fakeTeams(names: string[], storage: 'folder' | 'webdav' = 'folder'): TeamHost {
 	const files = new Map<string, Map<string, { text: string; version: string }>>()
 	let next = 1
 	const memberships: TeamMembership[] = names.map((name, index) => {
-		const path = `/Shared/${name}`
+		const id = `team-${index}`
 		files.set(
-			path,
+			id,
 			new Map([['team', { text: serializeTeamFile(newTeamFile(name, null)), version: 'v0' }]]),
 		)
 		return {
-			id: `team-${index}`,
+			id,
 			name,
-			location: { type: 'folder', path },
+			location:
+				storage === 'webdav'
+					? {
+							type: 'webdav',
+							url: `https://dav.example/${encodeURIComponent(name)}`,
+							user: 'made-up',
+						}
+					: { type: 'folder', path: `/Shared/${name}` },
 			refusesOverwrites: true,
 		}
 	})
 	let active = memberships[0]?.id ?? null
-	const here = () => {
-		const team = memberships.find((membership) => membership.id === active)
-		return (team?.location.type === 'folder' && files.get(team.location.path)) || new Map()
-	}
+	const here = () => (active && files.get(active)) || new Map()
 	const store: TeamStore = {
 		list: async (area) =>
 			[...here()]
@@ -245,12 +275,19 @@ function fakeTeams(names: string[]): TeamHost {
 					bytes: file.text.length,
 				})),
 		read: async (area, name) => here().get(`${area}/${name}`) ?? null,
-		async write(area, name, text) {
+		// Like a real store, a write over a version other than the one read is refused.
+		async write(area, name, text, expected) {
+			if ((here().get(`${area}/${name}`)?.version ?? null) !== expected)
+				throw new TeamConflict(area, name)
 			const version = `v${next++}`
 			here().set(`${area}/${name}`, { text, version })
 			return { version }
 		},
-		remove: async (area, name) => void here().delete(`${area}/${name}`),
+		async remove(area, name, expected) {
+			if ((here().get(`${area}/${name}`)?.version ?? null) !== expected)
+				throw new TeamConflict(area, name)
+			here().delete(`${area}/${name}`)
+		},
 		readTeamFile: async () => {
 			const file = here().get('team')
 			return file ? parseTeamFile(file.text) : null
@@ -291,8 +328,9 @@ export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 		appName: 'NGOmate',
 		tasks: TASKS,
 		memory: memoryStore(options.notes ?? {}),
+		jobs: memoryJobStore(options.jobs),
 		models: options.models,
-		team: fakeTeams(options.teams ?? []),
+		team: fakeTeams(options.teams ?? [], options.teamStorage),
 		loadSettings: async () => settings,
 		saveSettings: async (next) => {
 			settings = next

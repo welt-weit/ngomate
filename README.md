@@ -75,6 +75,7 @@ Each task is a plain text file, so you can read what it tells the model and chan
 - **Connects your other tools**: search services, knowledge bases and other tools plug in through the [Model Context Protocol](https://modelcontextprotocol.io). Anything that would change something asks you first.
 - **At home on a Mac**: its commands are in the menu bar with the usual shortcuts, including Settings (⌘,) and switching teams (⌘1 to ⌘9).
 - **Flags what it can't back up**: dates and links that don't come from your material or a tool are marked, so you know what to check.
+- **Runs tasks on a schedule**: a job runs a ready-made task daily, weekly or monthly while the app is open, and writes the result to a note with what the checks found at the top. A time missed while the computer was off runs once when it is back. A job never changes anything on its own: what it asks to change waits under **Jobs** for you to allow. Where the system allows it, a notification says when a run is done. The chats of a job's last 20 runs are kept; older ones, and those of a job you delete, are deleted.
 
 > [!WARNING]
 > Local models make mistakes, including mixing up real figures. Check names and numbers before you use a draft.
@@ -96,8 +97,9 @@ A team shares memory notes and ready-made tasks through storage it already has. 
 - **Saving**: a note is yours unless you choose **Save for the team** when NGOmate asks before saving.
 - **What the assistant reads**: your own notes, then the team notes that fit your question.
 - **Team tasks** show up beside the built-in ones. Anyone in the team can change one, so after a change NGOmate shows you what it says before it runs.
-- **Limits**: 10 MB of team notes, 200 KB per note and 1 MB of tasks by default, changeable under **Settings → Teams**. Each person's app keeps to them.
+- **Limits**: 10 MB of team notes, 200 KB per note and 1 MB of tasks and team jobs together by default, changeable under **Settings → Teams**. Each person's app keeps to them.
 - **Connectors** the team suggests appear under **Settings → Connectors**. Each person signs in with their own account.
+- **Team jobs** run on whichever member's computer has the app open with that team active first; that computer claims the run, so a date runs once. This needs the team on WebDAV or S3, on storage that refuses to write over a change (NGOmate tests that when you connect): a synced folder only sees the others' claims once its sync app catches up, and a connector holds notes and tasks only. The result goes to a team note. Your own notes are not given to a team job's model, and it uses only the connectors the team suggests, among those set up on the computer that runs it. A change it asks for waits on that computer. The job and its run list are kept in the team's storage as `jobs/` and `job-states/`, and count with team tasks toward the tasks limit.
 - **Secrets** (an app password, an access key) stay in your operating system's keychain.
 
 When you connect a bucket or a server, NGOmate saves a small test file twice to see whether the storage refuses to save over a change, removes it again, and tells you under **Settings → Teams** if it does not. Then, if two people save the same note at once, the last save wins.
@@ -111,7 +113,7 @@ Any MCP server can hold a team by offering these five tools. Answers are JSON in
 | Tool | Arguments | Answer |
 |---|---|---|
 | `get_team` | none | The team file: `{ "format": 1, "name", "createdBy", "limits", "connectors" }` |
-| `list_notes` | `area`: `notes` or `tasks` | `[{ "name", "version", "updatedAt", "bytes" }]` |
+| `list_notes` | `area`: `notes` or `tasks` (team jobs are not kept on a connector) | `[{ "name", "version", "updatedAt", "bytes" }]` |
 | `read_note` | `area`, `name` | `{ "text", "version" }`, or an error `{ "code": "not_found" }` |
 | `write_note` | `area`, `name`, `text`, `expectedVersion` (`null` for a new note) | `{ "version" }`, or an error `{ "code": "conflict" }` when the note is not at that version |
 | `delete_note` | `area`, `name`, `expectedVersion` | `{}`, or an error `{ "code": "conflict" }` |
@@ -136,7 +138,7 @@ By default, nothing: the model, your documents and your memory notes stay on you
 
 - **A model server** you point NGOmate at receives the conversation.
 - **A knowledge base** receives your question only.
-- **Your team's storage** gets the team notes and tasks you save there: a shared folder, a WebDAV server, an S3 bucket or a connector, whichever the team chose.
+- **Your team's storage** gets the team notes and tasks you save there: a shared folder, a WebDAV server, an S3 bucket or a connector, whichever the team chose. A team job keeps there what you typed for it, who ran it and when, and any change it asked for, with what it would have sent.
 - **Other connectors** receive what a tool call needs. Anything that would change something, such as sending, posting, saving or deleting, asks you first.
 - **Access tokens** for connectors are kept in your operating system's keychain, not in a file.
 

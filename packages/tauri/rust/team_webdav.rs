@@ -1,4 +1,4 @@
-//! A team's notes and tasks in a folder on a WebDAV server: Nextcloud, ownCloud, a NAS. A write names
+//! A team's notes, tasks and jobs in a folder on a WebDAV server: Nextcloud, ownCloud, a NAS. A write names
 //! the ETag it replaces (`If-Match`), or `If-None-Match: *` for a new note, so a change someone else
 //! made is refused rather than overwritten. Nextcloud's own sign-in (Login Flow v2) gives the app its
 //! own password, which the person can revoke in Nextcloud.
@@ -154,7 +154,7 @@ impl Dav {
 
     fn note_url(area: Area, name: &str, dav: &Dav) -> Result<reqwest::Url> {
         check_name(name)?;
-        dav.url(&[area.folder(), &format!("{name}.md")])
+        dav.url(&[area.folder(), &area.file_name(name)])
     }
 
     pub async fn list(&self, area: Area) -> Result<Vec<Entry>> {
@@ -178,7 +178,7 @@ impl Dav {
             let Some(href) = first(item, "href") else { continue };
             let path = decode(&unescape(href.trim()));
             let Some(file) = path.trim_end_matches('/').rsplit('/').next() else { continue };
-            let Some(name) = file.strip_suffix(".md") else { continue };
+            let Some(name) = file.strip_suffix(&format!(".{}", area.extension())) else { continue };
             if check_name(name).is_err() || has_element(item, "collection") {
                 continue;
             }
@@ -209,7 +209,7 @@ impl Dav {
         let send = || {
             let request = self
                 .request(Method::PUT, url.clone())
-                .header("content-type", "text/markdown; charset=utf-8")
+                .header("content-type", folder.map_or("text/markdown; charset=utf-8", Area::content_type))
                 .body(text.to_string());
             match expected {
                 Some(version) => request.header("if-match", format!("\"{version}\"")),
@@ -426,6 +426,18 @@ mod tests {
         assert!(dav.remove(Area::Notes, name, Some(&version)).await.unwrap().conflict);
         assert!(!dav.remove(Area::Notes, name, second.version.as_deref()).await.unwrap().conflict);
         assert!(dav.read(Area::Notes, name).await.unwrap().is_none());
+
+        // A team job's state, as JSON in its own folder: only one of two claims over one version lands.
+        let state = dav.write(Area::JobStates, "weekly", "{}", None).await.unwrap();
+        let read = state.version.as_deref();
+        // Some servers, Nextcloud among them, keep a file's ETag for two writes within one second, so this
+        // waits; the app reads its claim back before running for the same reason.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        assert!(!dav.write(Area::JobStates, "weekly", r#"{"claim":"Amina"}"#, read).await.unwrap().conflict);
+        assert!(dav.write(Area::JobStates, "weekly", r#"{"claim":"Jonas"}"#, read).await.unwrap().conflict);
+        let states = dav.list(Area::JobStates).await.unwrap();
+        assert_eq!(states.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), ["weekly"]);
+        assert!(dav.list(Area::Jobs).await.unwrap().is_empty());
 
         let wrong = Dav::new(url, user, "wrong".into()).unwrap();
         assert!(wrong.list(Area::Notes).await.unwrap_err().to_string().contains("401"));

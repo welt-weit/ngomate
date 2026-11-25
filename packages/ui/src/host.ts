@@ -1,6 +1,7 @@
 import type {
 	ChatMessage,
 	FigureProblem,
+	JobStore,
 	MemoryStore,
 	ModelClient,
 	ModelTiming,
@@ -319,6 +320,13 @@ export interface NgomateHost {
 	deleteSecret(name: string): Promise<void>
 	models?: ModelHost
 	team?: TeamHost
+	/**
+	 * Tasks that run on a schedule while the app is open. A host without it leaves this out, and there
+	 * are no jobs.
+	 */
+	jobs?: JobStore
+	/** Tells the person something finished while they may be looking elsewhere, as the system does. */
+	notify?(title: string, body: string): void
 	/** For a host with menus of its own: their commands, and what to show in them. */
 	menu?: {
 		onCommand(listener: (command: MenuCommand) => void): () => void

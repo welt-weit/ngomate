@@ -868,7 +868,10 @@ function locationWords(location: TeamLocation, addons: Addon[]): string {
 export function TeamPanel(props: Props) {
 	const { host, settings, team, onOpenConnectors } = props
 	const { Button, Input } = usePrimitives()
-	const [entries, setEntries] = useState<Record<TeamArea, TeamEntry[]>>({ notes: [], tasks: [] })
+	const [entries, setEntries] = useState<Record<'notes' | 'tasks', TeamEntry[]>>({
+		notes: [],
+		tasks: [],
+	})
 	const [problem, setProblem] = useState<string | null>(null)
 	const [copied, setCopied] = useState<string | null>(null)
 	const { file, location, store } = team

@@ -1,12 +1,14 @@
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js'
 import {
+	type JobStore,
 	type MemoryStore,
 	type TaskFile,
 	TeamConflict,
 	type TeamStore,
 	connectMcpToolSource,
 	createOpenAiCompatibleClient,
+	parseJobState,
 	parseTeamFile,
 	serializeTeamFile,
 } from '@ngomate/core'
@@ -41,6 +43,57 @@ const memory: MemoryStore = {
 	read: (name) => call<string | null>('store_read', { area: 'memory', name }),
 	write: (name, text) => call('store_write', { area: 'memory', name, text }),
 	remove: (name) => call('store_remove', { area: 'memory', name }),
+}
+
+/** Changes to one job's state, one after another: a run's result and a click on Pause must not cross. */
+const jobQueue = new Map<string, Promise<unknown>>()
+function oneAtATime<T>(id: string, work: () => Promise<T>): Promise<T> {
+	const before = jobQueue.get(id) ?? Promise.resolve()
+	const next = before.then(work, work)
+	const settled = next.catch(() => {})
+	jobQueue.set(id, settled)
+	void settled.then(() => {
+		if (jobQueue.get(id) === settled) jobQueue.delete(id)
+	})
+	return next
+}
+
+const jobs: JobStore = {
+	async list() {
+		const entries = await call<Entry[]>('store_list', { area: 'jobs' })
+		return Promise.all(
+			entries.map(async (entry) => {
+				const [text, state] = await Promise.all([
+					call<string | null>('store_read', { area: 'jobs', name: entry.name }),
+					call<string | null>('store_read', { area: 'job-states', name: entry.name }),
+				])
+				return { id: entry.name, text: text ?? '', state: parseJobState(state) }
+			}),
+		)
+	},
+	write: (id, text) => call('store_write', { area: 'jobs', name: id, text }),
+	update: (id, change) =>
+		oneAtATime(id, async () => {
+			// A job deleted meanwhile keeps no state, or a new job of the same name would take it over.
+			const file = await call<string | null>('store_read', { area: 'jobs', name: id })
+			if (file === null) return null
+			const text = await call<string | null>('store_read', { area: 'job-states', name: id })
+			const next = change(parseJobState(text))
+			if (!next) return null
+			await call('store_write', {
+				area: 'job-states',
+				name: id,
+				text: JSON.stringify(next, null, 2),
+			})
+			return next
+		}),
+	remove: (id) =>
+		oneAtATime(id, async () => {
+			// The file first: a state without its file is never written again (see update), and the next job
+			// of that name writes its own.
+			await call('store_remove', { area: 'jobs', name: id })
+			await call('store_remove', { area: 'job-states', name: id })
+		}),
 }
 
 type TeamEntry = { name: string; version: string; updatedAt: number | null; bytes: number }
@@ -143,6 +196,7 @@ export function createTauriHost(options: { appName: string; tasks: TaskFile[] })
 	return {
 		...options,
 		memory,
+		jobs,
 		models,
 		team,
 		async loadSettings() {

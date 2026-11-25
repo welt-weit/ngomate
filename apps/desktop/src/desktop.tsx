@@ -11,6 +11,11 @@ import { listen } from '@tauri-apps/api/event'
 import '@ngomate/ui/default-theme.css'
 import '@ngomate/ui/styles.css'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
+import {
+	isPermissionGranted,
+	requestPermission,
+	sendNotification,
+} from '@tauri-apps/plugin-notification'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { check } from '@tauri-apps/plugin-updater'
@@ -50,6 +55,23 @@ async function checkForUpdate(): Promise<AvailableUpdate | null> {
 			})
 			await relaunch()
 		},
+	}
+}
+
+/**
+ * A system notification, as when a job finishes. The system asks the person once; if they say no,
+ * nothing is shown and the job's result is still in the app.
+ */
+let notificationsRefused = false
+async function notify(title: string, body: string) {
+	if (notificationsRefused) return
+	try {
+		const granted = (await isPermissionGranted()) || (await requestPermission()) === 'granted'
+		// Asked once a session: a person who said no is not asked again at every job.
+		if (!granted) notificationsRefused = true
+		else sendNotification({ title, body })
+	} catch {
+		// No notifications on this system: the result is in the app either way.
 	}
 }
 
@@ -105,6 +127,7 @@ function App() {
 			menu,
 			logo,
 			checkForUpdate,
+			notify: (title: string, body: string) => void notify(title, body),
 		}
 	}, [])
 	return <NgomateApp host={host} />

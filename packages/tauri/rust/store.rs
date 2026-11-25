@@ -9,6 +9,9 @@ pub enum Area {
     Memory,
     Conversations,
     Settings,
+    /// Jobs are Markdown too, beside their state as JSON in the same folder.
+    Jobs,
+    JobStates,
 }
 
 impl Area {
@@ -17,6 +20,8 @@ impl Area {
             "memory" => Ok(Area::Memory),
             "conversations" => Ok(Area::Conversations),
             "settings" => Ok(Area::Settings),
+            "jobs" => Ok(Area::Jobs),
+            "job-states" => Ok(Area::JobStates),
             _ => Err(Error::msg(format!("Unknown storage area {name}"))),
         }
     }
@@ -26,12 +31,13 @@ impl Area {
             Area::Memory => "memory",
             Area::Conversations => "conversations",
             Area::Settings => "settings",
+            Area::Jobs | Area::JobStates => "jobs",
         }
     }
 
     fn extension(self) -> &'static str {
         match self {
-            Area::Memory => "md",
+            Area::Memory | Area::Jobs => "md",
             _ => "json",
         }
     }
@@ -78,6 +84,10 @@ pub fn list(root: &Path, area: Area) -> Result<Vec<Entry>> {
             continue;
         }
         let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        // A file this store would refuse to read, such as one a person or a sync app left there.
+        if check_name(name).is_err() {
+            continue;
+        }
         let meta = item.metadata()?;
         let updated_at = meta
             .modified()
@@ -191,6 +201,19 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!((summaries[0].id.as_str(), summaries[0].title.as_str()), ("a", "Water"));
         assert_eq!(summaries[0].updated_at, "2027-01-01");
+    }
+
+    #[test]
+    fn keeps_a_job_and_its_state_side_by_side_but_lists_them_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), Area::Jobs, "funding", "---\nid: funding\n---\n").unwrap();
+        write(dir.path(), Area::JobStates, "funding", "{}").unwrap();
+        assert!(dir.path().join("jobs/funding.md").exists());
+        assert!(dir.path().join("jobs/funding.json").exists());
+        assert_eq!(list(dir.path(), Area::Jobs).unwrap().len(), 1);
+        assert_eq!(list(dir.path(), Area::JobStates).unwrap().len(), 1);
+        remove(dir.path(), Area::Jobs, "funding").unwrap();
+        assert!(dir.path().join("jobs/funding.json").exists());
     }
 
     #[test]

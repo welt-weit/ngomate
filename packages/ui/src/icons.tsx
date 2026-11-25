@@ -45,4 +45,7 @@ export const ICONS = {
 	/** Two people: the team. */
 	team: 'M6 7.5a2 2 0 1 0 0-4a2 2 0 1 0 0 4zM2.5 13c.5-2 1.8-3 3.5-3s3 1 3.5 3M11 7.5a1.75 1.75 0 1 0 0-3.5M11.5 10c1.2.2 2 1.1 2.4 2.5',
 	info: 'M8 14a6 6 0 1 0 0-12a6 6 0 1 0 0 12zM8 7.5v3.5M8 5.01v-.01',
+	/** Run a job now, or let a paused one run again. */
+	play: 'M5 3.5v9l7-4.5z',
+	pause: 'M5.5 3.5v9M10.5 3.5v9',
 } as const

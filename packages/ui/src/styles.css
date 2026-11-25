@@ -1127,6 +1127,26 @@ select.ngm-input {
 	padding: var(--ngm-space-1) var(--ngm-space-2);
 	font-size: 13px;
 	color: var(--ngm-muted);
+	/* A change's arguments can hold a long address or one long word. */
+	overflow-wrap: anywhere;
+}
+
+/* A change a job asked for, waiting for the person: what it is, then Allow and Don't allow. */
+.ngm-job-change {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ngm-space-1);
+	padding-bottom: var(--ngm-space-2);
+}
+
+.ngm-job-change .ngm-row {
+	padding: 0 var(--ngm-space-2);
+}
+
+.ngm-job-change .ngm-error {
+	margin: 0;
+	padding: 0 var(--ngm-space-2);
+	font-size: 13px;
 }
 
 /* A place to set up: its icon, then its name, on the list's text edge. */

@@ -1,8 +1,8 @@
-//! A team's notes and tasks in a folder the team's own sync app shares: Google Drive, OneDrive,
+//! A team's notes, tasks and jobs in a folder the team's own sync app shares: Google Drive, OneDrive,
 //! Dropbox, Nextcloud, Syncthing. The app only reads and writes files; moving them is the sync app's job.
 //!
 //! Only the folder the person picked in a native dialog is ever touched, and inside it only `notes/`,
-//! `tasks/` and the team file, so the interface cannot point this anywhere else.
+//! `tasks/`, `jobs/`, `job-states/` and the team file, so the interface cannot point this anywhere else.
 
 use crate::error::{Error, Result};
 use crate::store::check_name;
@@ -249,6 +249,9 @@ impl Store {
 pub enum Area {
     Notes,
     Tasks,
+    /// Jobs the team shares, as Markdown beside its tasks, and their state as JSON in its own folder.
+    Jobs,
+    JobStates,
 }
 
 impl Area {
@@ -256,6 +259,8 @@ impl Area {
         match name {
             "notes" => Ok(Area::Notes),
             "tasks" => Ok(Area::Tasks),
+            "jobs" => Ok(Area::Jobs),
+            "job-states" => Ok(Area::JobStates),
             _ => Err(Error::msg(format!("Unknown team area {name}"))),
         }
     }
@@ -264,7 +269,30 @@ impl Area {
         match self {
             Area::Notes => "notes",
             Area::Tasks => "tasks",
+            Area::Jobs => "jobs",
+            Area::JobStates => "job-states",
         }
+    }
+
+    /// The ending of each file's name, without its dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Area::JobStates => "json",
+            _ => "md",
+        }
+    }
+
+    /// What a file in this area is, for storage that keeps a content type.
+    pub fn content_type(self) -> &'static str {
+        match self {
+            Area::JobStates => "application/json; charset=utf-8",
+            _ => "text/markdown; charset=utf-8",
+        }
+    }
+
+    /// A file's name in this area, ending included.
+    pub fn file_name(self, name: &str) -> String {
+        format!("{name}.{}", self.extension())
     }
 }
 
@@ -299,7 +327,7 @@ fn version_of(bytes: &[u8]) -> String {
 
 fn note_path(root: &Path, area: Area, name: &str) -> Result<PathBuf> {
     check_name(name)?;
-    Ok(root.join(area.folder()).join(format!("{name}.md")))
+    Ok(root.join(area.folder()).join(area.file_name(name)))
 }
 
 fn current_version(path: &Path) -> Result<Option<String>> {
@@ -338,7 +366,7 @@ pub fn list(root: &Path, area: Area) -> Result<Vec<Entry>> {
     for item in std::fs::read_dir(folder)? {
         let item = item?;
         let path = item.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+        if path.extension().and_then(|e| e.to_str()) != Some(area.extension()) {
             continue;
         }
         let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
@@ -451,6 +479,19 @@ mod tests {
         let mut names: Vec<String> = list(dir.path(), Area::Notes).unwrap().into_iter().map(|entry| entry.name).collect();
         names.sort();
         assert_eq!(names, ["plan", "plan (conflicted copy 2026-11-23)"]);
+    }
+
+    #[test]
+    fn keeps_a_team_job_as_markdown_and_its_state_as_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = write(dir.path(), Area::Jobs, "funding", "---\nid: funding\n---\n", None).unwrap();
+        write(dir.path(), Area::JobStates, "funding", "{}", None).unwrap();
+        assert!(dir.path().join("jobs/funding.md").exists());
+        assert!(dir.path().join("job-states/funding.json").exists());
+        assert_eq!(list(dir.path(), Area::JobStates).unwrap()[0].name, "funding");
+        // A second computer writing over the version it read is refused once the first has written.
+        assert!(write(dir.path(), Area::JobStates, "funding", "{\"claim\":1}", None).unwrap().conflict);
+        assert!(!job.conflict);
     }
 
     #[test]
