@@ -50,4 +50,22 @@ const COMMANDS: &[&str] = &[
 
 fn main() {
     tauri_plugin::Builder::new(COMMANDS).build();
+    link_clang_runtime();
+}
+
+/// whisper.cpp's Metal code asks which macOS it runs on (`@available`). Built for an older macOS than it
+/// asks about, as the app is (11.0), that check needs `___isPlatformVersionAtLeast` from clang's runtime
+/// library, which rustc leaves out of the link (`-nodefaultlibs`): the release build then fails to link.
+fn link_clang_runtime() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+    let Ok(output) = std::process::Command::new("clang").arg("--print-runtime-dir").output() else {
+        return;
+    };
+    let dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && std::path::Path::new(&dir).join("libclang_rt.osx.a").exists() {
+        println!("cargo:rustc-link-search=native={dir}");
+        println!("cargo:rustc-link-lib=static=clang_rt.osx");
+    }
 }
