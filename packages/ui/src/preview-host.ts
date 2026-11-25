@@ -20,6 +20,7 @@ import {
 	type Settings,
 	type TeamHost,
 	type TeamMembership,
+	type VoiceHost,
 } from './host.js'
 
 /**
@@ -220,9 +221,46 @@ export type FakeHostOptions = {
 	jobs?: Record<string, { text: string; state?: JobState }>
 	/** Tasks the person made, by id, as their files' text. */
 	ownTasks?: Record<string, string>
+	/** Voice input that "hears" this sentence; `installed` voice models are there from the start. */
+	voice?: { heard: string; installed?: string[] }
 }
 
 /** Jobs in memory, as the desktop app keeps them in files. */
+/** Voice input on made-up models: downloads finish at once, and every recording is heard as `heard`. */
+export function fakeVoice(options: { heard: string; installed?: string[] }): VoiceHost {
+	const installed = new Set(options.installed ?? [])
+	const model = (id: string, name: string, sizeBytes: number, minRamGb: number) => ({
+		id,
+		name,
+		vendor: 'OpenAI (Whisper)',
+		license: 'MIT',
+		sizeBytes,
+		minRamGb,
+		installed: installed.has(id),
+		partialBytes: 0,
+		download: null,
+	})
+	return {
+		info: async () => ({
+			models: [
+				model('whisper-base-q5', 'Voice, standard', 59_707_625, 2),
+				model('whisper-tiny-q5', 'Voice, small and fast', 32_152_673, 1),
+				model('whisper-small-q5', 'Voice, most accurate', 190_085_487, 4),
+			],
+			recommended: 'whisper-base-q5',
+			freeDiskBytes: 50_000_000_000,
+		}),
+		async download(id, onProgress) {
+			onProgress({ id, receivedBytes: 1, totalBytes: 1, phase: 'downloading' })
+			installed.add(id)
+		},
+		cancelDownload: async () => {},
+		remove: async (id) => void installed.delete(id),
+		transcribe: async () => options.heard,
+		record: async () => ({ stop: async () => new Float32Array(16_000), cancel: () => {} }),
+	}
+}
+
 export function memoryOwnTasks(initial: Record<string, string> = {}): OwnTaskStore {
 	const tasks = new Map(Object.entries(initial))
 	return {
@@ -347,6 +385,7 @@ export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 		memory: memoryStore(options.notes ?? {}),
 		jobs: memoryJobStore(options.jobs),
 		ownTasks: memoryOwnTasks(options.ownTasks),
+		...(options.voice ? { voice: fakeVoice(options.voice) } : {}),
 		models: options.models,
 		team: fakeTeams(options.teams ?? [], options.teamStorage),
 		loadSettings: async () => settings,

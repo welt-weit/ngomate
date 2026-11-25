@@ -10,6 +10,8 @@ const COMMANDS: &[&str] = &[
     "pick_document",
     "save_document",
     "model_info",
+    "voice_info",
+    "voice_transcribe",
     "model_download",
     "model_cancel_download",
     "model_remove",

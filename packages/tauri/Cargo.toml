@@ -32,6 +32,14 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 quick-xml = "0.38"
 rand = "0.9"
 
+# Speech to text for voice input, built into the app (whisper.cpp; needs CMake to build). The Mac's
+# graphics chip does the work there; elsewhere the processor.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+whisper-rs = "0.16"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 

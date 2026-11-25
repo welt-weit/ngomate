@@ -30,6 +30,7 @@ import { SettingsPage, type SettingsSection } from './Settings.js'
 import { TabBar, startConversationDrag } from './TabBar.js'
 import { TaskDialog, type TaskForm } from './TaskDialog.js'
 import { TeamPanel } from './TeamPanel.js'
+import { ToolsPanel } from './ToolsPanel.js'
 import { UpdateNotice } from './UpdateNotice.js'
 import { type FoundText, type WorkDraft, WorkPanel, type WorkTask, matches } from './WorkPanel.js'
 import {
@@ -85,6 +86,7 @@ const PAGE_TITLES: Record<Page, string> = {
 	you: 'You',
 	model: 'Model',
 	addons: 'Connectors',
+	tools: 'Built-in tools',
 	memory: 'Notes',
 	team: 'Teams',
 	about: 'About',
@@ -1068,6 +1070,17 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			open: () => openPage('addons'),
 			active: shown === pageTab('addons'),
 		},
+		...(host.voice
+			? [
+					{
+						key: 'tools',
+						label: 'Built-in tools',
+						icon: ICONS.mic,
+						open: () => openPage('tools'),
+						active: shown === pageTab('tools'),
+					},
+				]
+			: []),
 		{
 			key: 'memory',
 			label: 'Notes',
@@ -1110,6 +1123,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				onCheckUpdates={() => ask('update')}
 				sections={{
 					model: <ModelPanel host={host} settings={settings} onChange={updateSettings} />,
+					tools: <ToolsPanel host={host} settings={settings} onChange={updateSettings} />,
 					addons: (
 						<AddonsPanel
 							host={host}

@@ -78,6 +78,63 @@ pub const MODELS: &[Model] = &[
     },
 ];
 
+/// A chat model: the only kind the runtime starts or a picked file is imported as.
 pub fn find(id: &str) -> Option<&'static Model> {
     MODELS.iter().find(|model| model.id == id)
 }
+
+pub fn find_voice(id: &str) -> Option<&'static Model> {
+    VOICE_MODELS.iter().find(|model| model.id == id)
+}
+
+/// Any model the app downloads, chat or voice: what downloading, pausing and removing work on.
+pub fn find_any(id: &str) -> Option<&'static Model> {
+    find(id).or_else(|| find_voice(id))
+}
+
+/// Every file the app downloads into the models folder, so moving the folder moves them all.
+pub fn all() -> impl Iterator<Item = &'static Model> {
+    MODELS.iter().chain(VOICE_MODELS.iter())
+}
+
+/// Speech-to-text models for voice input: Whisper, quantized by whisper.cpp, run on the computer. Kept
+/// apart from the chat models, so one is never offered or started as the other.
+pub const VOICE_MODELS: &[Model] = &[
+    Model {
+        id: "whisper-base-q5",
+        name: "Voice, standard",
+        vendor: "OpenAI (Whisper), converted by whisper.cpp",
+        license: "MIT",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin",
+        file: "ggml-base-q5_1.bin",
+        sha256: "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+        size_bytes: 59707625,
+        min_ram_gb: 2,
+        search_knowledge_first: false,
+    },
+    Model {
+        id: "whisper-tiny-q5",
+        name: "Voice, small and fast",
+        vendor: "OpenAI (Whisper), converted by whisper.cpp",
+        license: "MIT",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny-q5_1.bin",
+        file: "ggml-tiny-q5_1.bin",
+        sha256: "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
+        size_bytes: 32152673,
+        min_ram_gb: 1,
+        search_knowledge_first: false,
+    },
+    Model {
+        id: "whisper-small-q5",
+        name: "Voice, most accurate",
+        vendor: "OpenAI (Whisper), converted by whisper.cpp",
+        license: "MIT",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin",
+        file: "ggml-small-q5_1.bin",
+        sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+        size_bytes: 190085487,
+        min_ram_gb: 4,
+        search_knowledge_first: false,
+    },
+];
+

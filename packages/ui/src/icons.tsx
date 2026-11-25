@@ -19,6 +19,8 @@ export function Icon({ path, size = 16 }: { path: string; size?: number }) {
 
 export const ICONS = {
 	close: 'M4 4l8 8M12 4l-8 8',
+	/** Speak instead of typing. */
+	mic: 'M8 2.5a2 2 0 0 0-2 2v3.5a2 2 0 0 0 4 0V4.5a2 2 0 0 0-2-2zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5M6 13.5h4',
 	/** The spark: the assistant does this with you. On every action that hands work to it. */
 	spark:
 		'M6.5 2.5l1.1 3.4 3.4 1.1-3.4 1.1-1.1 3.4-1.1-3.4L2 7l3.4-1.1zM12 9.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z',

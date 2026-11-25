@@ -18,6 +18,7 @@ import {
 	type ModelHost,
 	type NgomateHost,
 	type OwnTaskStore,
+	type VoiceHost,
 	type PickedDocument,
 	type Settings,
 	type TeamHost,
@@ -175,6 +176,16 @@ const models: ModelHost = {
 	stop: () => call('runtime_stop'),
 }
 
+/** Voice input with Whisper, built into the plugin. Its models download like the chat models. */
+const voice: VoiceHost = {
+	info: () => call('voice_info'),
+	download: models.download,
+	cancelDownload: models.cancelDownload,
+	remove: models.remove,
+	// Sent as numbers: two minutes at most, which the plugin also checks.
+	transcribe: (id, samples) => call<string>('voice_transcribe', { id, samples: Array.from(samples) }),
+}
+
 /** A connector that is a program on this computer, speaking MCP over its input and output. */
 export function programTransport(id: string, command: string, args: string[]): Transport {
 	const transport: Transport = {
@@ -233,6 +244,7 @@ export function createTauriHost(options: { appName: string; tasks: TaskFile[] })
 		memory,
 		jobs,
 		ownTasks,
+		voice,
 		models,
 		team,
 		async loadSettings() {

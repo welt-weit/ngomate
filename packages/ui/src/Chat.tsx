@@ -14,11 +14,12 @@ import remarkGfm from 'remark-gfm'
 import { type ActionItem, ActionMenu } from './ActionMenu.js'
 import { DraftCard } from './DraftCard.js'
 import { type Draft, type MakingContext, emptyDraft } from './drafts.js'
-import { promptLabel } from './format.js'
+import { formatBytes, promptLabel } from './format.js'
 import type { AnswerNotice, AnswerTiming, NgomateHost, PickedDocument } from './host.js'
 import { ICONS, Icon } from './icons.js'
 import { usePrimitives } from './primitives.js'
 import { type ChatDeps, type PendingWrite, useChat } from './useChat.js'
+import { useVoice } from './useVoice.js'
 
 function WriteConfirmation({ request }: { request: PendingWrite }) {
 	const { Button } = usePrimitives()
@@ -146,6 +147,12 @@ function Notice({ notice }: { notice: AnswerNotice }) {
 			)}
 		</div>
 	)
+}
+
+/** "0:07", "1:42": how long the microphone has been listening. */
+const clock = (ms: number) => {
+	const seconds = Math.max(0, Math.floor(ms / 1000))
+	return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
 /** "14:05" today, "12 Nov, 14:05" before. */
@@ -361,7 +368,7 @@ export function Chat({
 	attachRequest?: number
 	making?: ChatMaking
 }) {
-	const { Button, TextArea, Chip } = usePrimitives()
+	const { Button, TextArea, Chip, Dialog } = usePrimitives()
 	const chat = useChat(deps, conversationId)
 	const [text, setText] = useState('')
 	const [documents, setDocuments] = useState<PickedDocument[]>([])
@@ -403,6 +410,17 @@ export function Chat({
 			)
 	}, [start, chat.loaded, chat.busy, Boolean(making)])
 
+	// Speaking instead of typing: what is heard is added to the message, for the person to read first.
+	const voice = useVoice(deps.host, deps.settings.voiceModel, (heard) =>
+		setText((typed) => (typed.trim() ? `${typed.trimEnd()} ${heard}` : heard)),
+	)
+	// A clock while listening, so the person sees it is still on.
+	const [, tick] = useState(0)
+	useEffect(() => {
+		if (voice.status.kind !== 'listening') return
+		const timer = setInterval(() => tick((n) => n + 1), 1000)
+		return () => clearInterval(timer)
+	}, [voice.status.kind])
 	const [makeFrom, setMakeFrom] = useState(false)
 	// A draft being saved: nothing else is sent meanwhile, or the answer would put it back unsaved.
 	const [savingDraft, setSavingDraft] = useState(false)
@@ -700,7 +718,50 @@ export function Chat({
 						)}
 					</div>
 				))}
-				{/* One frame for the text and its two actions, so no row of buttons sits under it. */}
+				{voice.status.kind !== 'idle' && (
+					<output className="ngm-voice-line">
+						{voice.status.kind === 'listening'
+							? `Listening… ${clock(Date.now() - voice.status.since)}. Press the microphone again to write it down.`
+							: voice.status.kind === 'writing'
+								? 'Writing down what you said…'
+								: voice.status.progress
+									? `Getting voice ready: ${formatBytes(voice.status.progress.receivedBytes)} of ${formatBytes(voice.status.progress.totalBytes)}`
+									: 'Getting voice ready…'}
+					</output>
+				)}
+				{voice.problem && (
+					<p className="ngm-error" role="alert">
+						{voice.problem}
+					</p>
+				)}
+				{voice.needsSetup && (
+					<Dialog
+						title="Speak instead of typing"
+						onClose={voice.dismissSetup}
+						actions={
+							<>
+								<Button onClick={voice.dismissSetup}>Cancel</Button>
+								<Button
+									variant="primary"
+									onClick={() => voice.needsSetup && void voice.setUp(voice.needsSetup)}
+								>
+									Download {formatBytes(voice.needsSetup.sizeBytes)}
+								</Button>
+							</>
+						}
+					>
+						<p>
+							To turn what you say into text on this computer, NGOmate needs a voice model: a
+							one-time download of {formatBytes(voice.needsSetup.sizeBytes)}. After that it works
+							without the internet.
+						</p>
+						<p className="ngm-muted">
+							What you say is turned into text here and then dropped. Nothing is recorded or sent
+							anywhere. You can change or remove it under Built-in tools.
+						</p>
+					</Dialog>
+				)}
+				{/* One frame for the text and its actions, so no row of buttons sits under it. */}
 				<div className="ngm-composer-box" ref={composerBox}>
 					<TextArea
 						aria-label="Message"
@@ -711,6 +772,23 @@ export function Chat({
 						onKeyDown={onKey}
 					/>
 					<div className="ngm-composer-actions">
+						{voice.available && (
+							<Button
+								variant="quiet"
+								className={`ngm-icon-button${voice.status.kind === 'listening' ? ' ngm-listening' : ''}`}
+								aria-label={voice.status.kind === 'listening' ? 'Stop and write it down' : 'Speak'}
+								aria-pressed={voice.status.kind === 'listening'}
+								title={
+									voice.status.kind === 'listening'
+										? 'Stop and write it down'
+										: 'Speak instead of typing'
+								}
+								disabled={voice.status.kind === 'writing' || voice.status.kind === 'getting-ready'}
+								onClick={() => void voice.press()}
+							>
+								<Icon path={voice.status.kind === 'listening' ? ICONS.stop : ICONS.mic} />
+							</Button>
+						)}
 						<Button
 							variant="quiet"
 							className="ngm-icon-button"

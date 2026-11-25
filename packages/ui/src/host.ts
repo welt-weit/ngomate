@@ -51,6 +51,30 @@ export type DownloadProgress = {
 	phase: 'downloading' | 'verifying'
 }
 
+export type VoiceInfo = {
+	models: ModelEntry[]
+	/** The size that suits this computer: fetched on the first press of the microphone. */
+	recommended: string
+	freeDiskBytes: number
+}
+
+/**
+ * Voice input: speech turned into text on this computer. The recording is 16 kHz mono samples; it is
+ * turned into text and not kept. A host without it leaves this out, and there is no microphone button.
+ */
+export interface VoiceHost {
+	info(): Promise<VoiceInfo>
+	download(id: string, onProgress: (progress: DownloadProgress) => void): Promise<void>
+	cancelDownload(id: string): Promise<void>
+	remove(id: string): Promise<void>
+	transcribe(id: string, samples: Float32Array): Promise<string>
+	/** Records from the microphone. Left out, the window records itself, as a browser does. */
+	record?(): Promise<Recording>
+}
+
+/** A recording under way: stopped, it gives its 16 kHz mono samples; cancelled, nothing. */
+export type Recording = { stop(): Promise<Float32Array>; cancel(): void }
+
 /** The local model runtime. A host without one, such as a browser preview, leaves this out. */
 export interface ModelHost {
 	info(): Promise<ModelInfo>
@@ -122,6 +146,8 @@ export type Settings = {
 	drafts?: Record<string, 'task' | 'job'>
 	/** The chat each task or job was made in, by its key, so it can be changed in words there again. */
 	madeIn?: Record<string, string>
+	/** The voice model chosen under Built-in tools; without one, the size that suits the computer. */
+	voiceModel?: string
 }
 
 /** Where a person's own tasks are kept: one Markdown file each, named by the task's id. */
@@ -341,6 +367,7 @@ export interface NgomateHost {
 	jobs?: JobStore
 	/** Tasks the person made. A host without it leaves this out, and only built-in and team tasks show. */
 	ownTasks?: OwnTaskStore
+	voice?: VoiceHost
 	/** Tells the person something finished while they may be looking elsewhere, as the system does. */
 	notify?(title: string, body: string): void
 	/** For a host with menus of its own: their commands, and what to show in them. */

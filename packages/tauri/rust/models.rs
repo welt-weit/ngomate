@@ -125,8 +125,11 @@ fn partial_path(dir: &Path, model: &Model) -> PathBuf {
 }
 
 pub fn entries(dir: &Path, downloads: &Downloads) -> Vec<ModelEntry> {
-    catalog::MODELS
-        .iter()
+    entries_of(catalog::MODELS, dir, downloads)
+}
+
+pub fn entries_of(list: &'static [Model], dir: &Path, downloads: &Downloads) -> Vec<ModelEntry> {
+    list.iter()
         .map(|model| ModelEntry {
             id: model.id,
             name: model.name,
@@ -371,8 +374,7 @@ pub async fn remove(dir: &Path, model: &Model) -> Result<()> {
 
 /// Every file of the catalog in this folder, finished or partial.
 fn files_in(dir: &Path) -> Vec<PathBuf> {
-    catalog::MODELS
-        .iter()
+    catalog::all()
         .flat_map(|model| [installed_path(dir, model), partial_path(dir, model)])
         .filter(|path| path.exists())
         .collect()

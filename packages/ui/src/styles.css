@@ -853,12 +853,20 @@ select.ngm-input {
 	border-radius: var(--ngm-radius);
 }
 
-.ngm-composer-box:focus-within {
-	border-color: var(--ngm-accent);
+.ngm-composer-box {
+	transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-/* The frame is the field: the text area inside it has none of its own. */
-.ngm-composer-box textarea {
+/* One focus mark, on the box: its border and a soft halo, never a second ring inside it. */
+.ngm-composer-box:focus-within {
+	border-color: var(--ngm-accent);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--ngm-accent) 22%, transparent);
+}
+
+/* The frame is the field: the text area inside it has none of its own, focus outline included (the
+   general one for fields would otherwise draw a ring inside the box's). */
+.ngm-composer-box textarea,
+.ngm-composer-box textarea.ngm-input:focus-visible {
 	display: block;
 	flex: 1;
 	min-height: var(--ngm-row);
@@ -1355,4 +1363,58 @@ select.ngm-input {
 	background: var(--ngm-control, var(--ngm-panel));
 	border-color: transparent;
 	opacity: 1;
+}
+
+/* What voice input is doing, just above the message field. */
+.ngm-voice-line {
+	display: block;
+	margin: 0 0 var(--ngm-space-2);
+	color: var(--ngm-muted);
+	font-size: 13px;
+}
+
+/* The microphone while it listens: in the accent colour, so it is plain that it is on. */
+.ngm-button.ngm-quiet.ngm-icon-button.ngm-listening {
+	color: var(--ngm-accent-text);
+	background: var(--ngm-accent);
+}
+
+/* A built-in tool on its page: a card, its options listed one under another. */
+.ngm-tool-card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ngm-space-2);
+	margin-top: var(--ngm-space-4);
+	padding: var(--ngm-space-4);
+	border: 1px solid var(--ngm-line);
+	border-radius: var(--ngm-radius);
+}
+
+.ngm-tool-card h3,
+.ngm-tool-card p {
+	margin: 0;
+}
+
+.ngm-tool-options {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ngm-space-3);
+	margin: var(--ngm-space-2) 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.ngm-tool-options > li {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ngm-space-1);
+	padding-top: var(--ngm-space-3);
+	border-top: 1px solid var(--ngm-line);
+}
+
+.ngm-tool-option-head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--ngm-space-2);
+	align-items: center;
 }

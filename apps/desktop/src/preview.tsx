@@ -135,6 +135,9 @@ export function start(root: Root) {
 				MAKING,
 			],
 			ownTasks: { 'funder-page-check': OWN_TASK },
+			voice: {
+				heard: 'Every Monday, find new funding for clean water projects and write it to a note.',
+			},
 			settings: { drafts: { [MAKING.id]: 'job' } },
 			jobs: { 'funding-this-week': SAMPLE_JOB },
 			teams: ['Riverside Water Group', 'Coalition for Clean Rivers'],

@@ -404,3 +404,37 @@ describe('the shared frame of lists and dialogs', () => {
 		).toBeTruthy()
 	})
 })
+
+describe('voice input', () => {
+	it('asks once to fetch the voice model, then writes what was said into the message', async () => {
+		const host = createFakeHost({ voice: { heard: 'Find new funding for water projects.' } })
+		render(<NgomateApp host={host} />)
+		const mic = await screen.findByRole('button', { name: 'Speak' })
+		await userEvent.click(mic)
+		// Nothing is fetched without asking: the size is said first.
+		const dialog = await screen.findByRole('dialog', { name: 'Speak instead of typing' })
+		expect(within(dialog).getByText(/one-time download of 57 MB/)).toBeTruthy()
+		await userEvent.click(within(dialog).getByRole('button', { name: /^Download/ }))
+		await waitFor(async () => expect((await host.voice?.info())?.models[0]?.installed).toBe(true))
+
+		await userEvent.click(screen.getByRole('button', { name: 'Speak' }))
+		expect(await screen.findByText(/^Listening… 0:0\d/)).toBeTruthy()
+		await userEvent.click(screen.getByRole('button', { name: 'Stop and write it down' }))
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message') as HTMLTextAreaElement).value).toBe(
+				'Find new funding for water projects.',
+			),
+		)
+		// Written down, not sent: the person reads it first.
+		expect(await host.listConversations()).toEqual([])
+	})
+
+	it('is managed under Built-in tools', async () => {
+		const host = createFakeHost({ voice: { heard: 'x', installed: ['whisper-base-q5'] } })
+		render(<NgomateApp host={host} />)
+		await userEvent.click(await screen.findByRole('button', { name: 'Built-in tools' }))
+		const card = await screen.findByRole('region', { name: 'Voice' })
+		expect(await within(card).findByText('In use')).toBeTruthy()
+		expect(within(card).getAllByRole('button', { name: 'Download' })).toHaveLength(2)
+	})
+})

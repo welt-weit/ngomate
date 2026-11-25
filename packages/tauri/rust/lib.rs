@@ -12,6 +12,7 @@ mod store;
 mod team;
 mod team_s3;
 mod team_webdav;
+mod voice;
 
 use addons::Addons;
 use error::{Error, Result};
@@ -86,6 +87,11 @@ fn usable_models_dir<R: TauriRuntime>(app: &AppHandle<R>) -> Result<PathBuf> {
 
 fn model(id: &str) -> Result<&'static catalog::Model> {
     catalog::find(id).ok_or_else(|| Error::msg(format!("Unknown model {id}")))
+}
+
+/// A chat or voice model, for what both are handled alike: downloading, pausing, removing.
+fn any_model(id: &str) -> Result<&'static catalog::Model> {
+    catalog::find_any(id).ok_or_else(|| Error::msg(format!("Unknown model {id}")))
 }
 
 #[tauri::command]
@@ -463,13 +469,50 @@ async fn model_download<R: TauriRuntime>(
     id: String,
     on_progress: Channel<models::Progress>,
 ) -> Result<()> {
-    let entry = model(&id)?;
+    let entry = any_model(&id)?;
     app.state::<FolderChange>().check()?;
     let dir = usable_models_dir(&app)?;
     models::download(&dir, &downloads, entry, entry.url, move |progress| {
         let _ = on_progress.send(progress);
     })
     .await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceInfo {
+    models: Vec<models::ModelEntry>,
+    /// The size that suits this computer, offered first and fetched on the first press of the mic.
+    recommended: &'static str,
+    free_disk_bytes: u64,
+}
+
+#[tauri::command]
+fn voice_info<R: TauriRuntime>(app: AppHandle<R>, downloads: State<'_, Downloads>) -> Result<VoiceInfo> {
+    let dir = models_dir(&app)?;
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    Ok(VoiceInfo {
+        models: models::entries_of(catalog::VOICE_MODELS, &dir, &downloads),
+        recommended: voice::recommended(total_ram_gb(&system)),
+        free_disk_bytes: models::free_disk_bytes(&dir),
+    })
+}
+
+/// Turns a recording into text with a voice model on this computer. The recording is not kept.
+#[tauri::command]
+async fn voice_transcribe<R: TauriRuntime>(
+    app: AppHandle<R>,
+    voice: State<'_, voice::Voice>,
+    id: String,
+    samples: Vec<f32>,
+) -> Result<String> {
+    let entry = catalog::find_voice(&id).ok_or_else(|| Error::msg(format!("Unknown voice model {id}")))?;
+    let path = models::installed_path(&usable_models_dir(&app)?, entry);
+    if !path.exists() {
+        return Err(Error::msg("The voice model is not downloaded yet."));
+    }
+    voice::transcribe(&voice, &id, &path, samples).await
 }
 
 #[tauri::command]
@@ -479,7 +522,9 @@ fn model_cancel_download(downloads: State<'_, Downloads>, id: String) {
 
 #[tauri::command]
 async fn model_remove<R: TauriRuntime>(app: AppHandle<R>, runtime: State<'_, Runtime>, id: String) -> Result<()> {
-    let entry = model(&id)?;
+    let entry = any_model(&id)?;
+    // A voice model in use is let go first, so its file can be removed.
+    app.state::<voice::Voice>().forget(&id);
     app.state::<FolderChange>().check()?;
     // Held to the end, so a save under way cannot write the file back and a start cannot load the model.
     let _settled = runtime.settled().await;
@@ -652,6 +697,8 @@ async fn addon_stop(addons: State<'_, Addons>, id: String) -> Result<()> {
 pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
     Builder::new("ngomate")
         .invoke_handler(tauri::generate_handler![
+            voice_info,
+            voice_transcribe,
             store_list,
             store_read,
             store_write,
@@ -697,6 +744,7 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             app.manage(Downloads::default());
             app.manage(FolderChange::default());
             app.manage(Addons::default());
+            app.manage(voice::Voice::default());
             Ok(())
         })
         .on_event(|app, event| {
