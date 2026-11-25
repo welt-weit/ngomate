@@ -6,6 +6,7 @@ import {
 	type JobStore,
 	KEPT_RUNS,
 	afterFailure,
+	runDueAt,
 	claimRun,
 	claimWatch,
 	formatSchedule,
@@ -404,7 +405,7 @@ export function useJobs(
 				if (run.signal.reason !== 'limit') return
 				const ranAt = new Date()
 				const failedRun: JobRun = {
-					dueAt: before.nextDue,
+					dueAt: runDueAt(before, ranAt).toISOString(),
 					ranAt: ranAt.toISOString(),
 					outcome: 'failed',
 					reason: 'It took longer than 30 minutes and was stopped.',

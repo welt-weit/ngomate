@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { type ModelReply, parseTaskFile, serializeTaskFile } from '@ngomate/core'
+import {
+	type JobFile,
+	type ModelReply,
+	parseSchedule,
+	parseTaskFile,
+	serializeTaskFile,
+} from '@ngomate/core'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -10,6 +16,7 @@ import {
 	draftFromTask,
 	emptyDraft,
 	jobFromDraft,
+	keepFormSettings,
 	missingFromDraft,
 	parseDraft,
 	taskFromDraft,
@@ -113,6 +120,22 @@ describe('a draft made in words', () => {
 })
 
 describe('your own tasks', () => {
+	it('keep what was said in words when you switch to the form', async () => {
+		const host = createFakeHost({})
+		render(<NgomateApp host={host} />)
+		const work = await screen.findByRole('complementary', { name: 'Your work' })
+		await userEvent.click(within(work).getByRole('button', { name: 'Tasks' }))
+		await userEvent.click(within(work).getByRole('button', { name: 'New task…' }))
+		await userEvent.type(
+			await screen.findByLabelText('Tell me what you want'),
+			'Check a funder page',
+		)
+		await userEvent.click(screen.getByRole('button', { name: 'Fill it in myself' }))
+		expect((screen.getByLabelText('What it is for') as HTMLTextAreaElement).value).toBe(
+			'Check a funder page',
+		)
+	})
+
 	it('are made in the form, listed as yours, and run like any task', async () => {
 		const host = createFakeHost({})
 		render(<NgomateApp host={host} />)
@@ -235,6 +258,33 @@ describe('making a job in words', () => {
 })
 
 describe('changing a job', () => {
+	it('in the chat keeps a folder or tool to write to, and sending on its own, set in the form', () => {
+		const job = (overrides: Partial<JobFile>): JobFile => ({
+			id: 'funding',
+			title: 'Funding',
+			task: 'find-opportunities',
+			schedule: parseSchedule('weekly mon 09:00'),
+			destination: { kind: 'note', name: 'Funding' },
+			inputs: 'Water.',
+			...overrides,
+		})
+		const drafted = job({ destination: { kind: 'note', name: 'Funding' } })
+		const toFile = job({
+			destination: { kind: 'file', name: 'Funding', folder: '/Reports' },
+			send: { tool: 'send_email', to: { to: 'team@example.org' } },
+		})
+		expect(keepFormSettings(drafted, toFile, 'Funding {date}')).toEqual({
+			...drafted,
+			destination: { kind: 'file', name: 'Funding {date}', folder: '/Reports' },
+			send: { tool: 'send_email', to: { to: 'team@example.org' } },
+		})
+		const toTool = job({
+			destination: { kind: 'tool', name: 'save_page', field: 'body', args: {} },
+		})
+		expect(keepFormSettings(drafted, toTool).destination).toEqual(toTool.destination)
+		expect(keepFormSettings(drafted, undefined)).toEqual(drafted)
+	})
+
 	it('keeps its runs, and moves its next date to the new schedule', async () => {
 		const run = {
 			dueAt: '2026-11-23T08:00:00.000Z',

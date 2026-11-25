@@ -489,7 +489,12 @@ export function JobDialog({
 				{sendMode === 'own' && (
 					<>
 						<ToolFields
-							tools={tools}
+							tools={
+								tools?.filter((option) =>
+									option.fields.some((field) => RECIPIENT_FIELD.test(field.name)),
+								) ?? null
+							}
+							none="No connector offers a tool that sends to people, with a field that says who."
 							problem={toolsProblem}
 							tool={sendTool}
 							onTool={(name) => {
@@ -551,6 +556,7 @@ function ToolFields({
 	selectLabel,
 	fields,
 	resultField = false,
+	none = 'No connector offers a tool. Add one under Connectors first.',
 }: {
 	tools: ToolOption[] | null
 	problem: string | null
@@ -564,13 +570,14 @@ function ToolFields({
 	fields: (option: ToolOption) => ToolOption['fields']
 	/** Ask which field takes the result. */
 	resultField?: boolean
+	/** Said when no connector offers a tool that fits. */
+	none?: string
 }) {
 	const { Input, Select } = usePrimitives()
 	if (problem)
 		return <p className="ngm-error">The connectors' tools could not be read: {problem}</p>
 	if (!tools) return <p className="ngm-muted">Reading the connectors' tools…</p>
-	if (!tools.length)
-		return <p className="ngm-muted">No connector offers a tool. Add one under Connectors first.</p>
+	if (!tools.length) return <p className="ngm-muted">{none}</p>
 	const option = tools.find((each) => each.name === tool)
 	const shown = option ? fields(option).filter((each) => each.name !== field) : []
 	return (
@@ -614,29 +621,45 @@ function ToolFields({
 	)
 }
 
+/** Names a tool that removes something goes by. */
+const DELETES = /^(delete|remove|archive|revoke|purge|clear)_/i
+
 /** The connectors' tools as the form offers them: each with its text fields, the required ones marked. */
 export function toolOptions(
-	tools: { name: string; description: string; inputSchema: Record<string, unknown> }[],
+	tools: {
+		name: string
+		description: string
+		inputSchema: Record<string, unknown>
+		annotations?: { readOnly?: boolean; destructive?: boolean }
+	}[],
 ): ToolOption[] {
-	return tools.map((tool) => {
-		const schema = tool.inputSchema as {
-			properties?: Record<string, { type?: unknown; description?: unknown }>
-			required?: unknown
-		}
-		const required = Array.isArray(schema.required) ? schema.required : []
-		return {
-			name: tool.name,
-			description: tool.description,
-			fields: Object.entries(schema.properties ?? {})
-				.filter(([, property]) => property.type === undefined || property.type === 'string')
-				.map(([name, property]) => ({
-					name,
-					label:
-						typeof property.description === 'string' && property.description
-							? `${name}: ${property.description.slice(0, 80)}`
-							: name,
-					required: required.includes(name),
-				})),
-		}
-	})
+	// Only a tool that writes, and deletes nothing: a result or a message goes INTO it. A tool named as a
+	// delete is left out too, since a connector may not mark it destructive.
+	const writers = tools.filter(
+		(tool) =>
+			!tool.annotations?.readOnly && !tool.annotations?.destructive && !DELETES.test(tool.name),
+	)
+	return writers
+		.map((tool) => {
+			const schema = tool.inputSchema as {
+				properties?: Record<string, { type?: unknown; description?: unknown }>
+				required?: unknown
+			}
+			const required = Array.isArray(schema.required) ? schema.required : []
+			return {
+				name: tool.name,
+				description: tool.description,
+				fields: Object.entries(schema.properties ?? {})
+					.filter(([, property]) => property.type === undefined || property.type === 'string')
+					.map(([name, property]) => ({
+						name,
+						label:
+							typeof property.description === 'string' && property.description
+								? `${name}: ${property.description.slice(0, 80)}`
+								: name,
+						required: required.includes(name),
+					})),
+			}
+		})
+		.filter((option) => option.fields.length > 0)
 }

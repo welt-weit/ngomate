@@ -154,7 +154,8 @@ export function MakeChooser({
 }: {
 	kind: Draft['kind']
 	onWords: (text: string) => void
-	onForm: () => void
+	/** With what was typed so far, so switching to the form loses nothing. */
+	onForm: (text: string) => void
 	onClose: () => void
 }) {
 	const { Button, TextArea, Dialog } = usePrimitives()
@@ -169,7 +170,7 @@ export function MakeChooser({
 			title={kind === 'job' ? 'New job' : 'New task'}
 			onClose={onClose}
 			alternative={
-				<Button variant="quiet" onClick={onForm}>
+				<Button variant="quiet" onClick={() => onForm(text.trim())}>
 					Fill it in myself
 				</Button>
 			}

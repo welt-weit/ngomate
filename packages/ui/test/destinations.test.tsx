@@ -8,6 +8,7 @@ import {
 	serializeJobFile,
 } from '@ngomate/core'
 import { describe, expect, it } from 'vitest'
+import { toolOptions } from '../src/JobDialog.js'
 import { DEFAULT_SETTINGS } from '../src/host.js'
 import { createFakeHost } from '../src/preview-host.js'
 import { runJob, sendsOnlyTo } from '../src/runJob.js'
@@ -216,5 +217,30 @@ describe('starting NGOmate for a job', () => {
 		})
 		const time = { hour: 9, minute: 0 }
 		expect(wakeList([time, { ...time }])).toEqual([time])
+	})
+})
+
+describe('a run started before its date', () => {
+	it('is named for the day it ran, and keeps the date it was due for', async () => {
+		const { deps } = setup([say('Early.')])
+		const named = job({ destination: { kind: 'note', name: 'Update {date}' } })
+		const early = new Date(2026, 10, 25, 18)
+		const after = await runJob(deps, named, state(), signal, () => early)
+		expect(after.runs[0]?.note).toBe('Update 2026-11-25')
+		expect(after.nextDue).toBe(due.toISOString())
+	})
+})
+
+describe('the tools a job may write to or send with', () => {
+	it('are those that write, delete nothing and have a text field to fill', () => {
+		const text = { type: 'object', properties: { body: { type: 'string' } } }
+		const options = toolOptions([
+			{ ...TOOLS[0], annotations: {} } as never,
+			{ name: 'search', description: '', inputSchema: text, annotations: { readOnly: true } },
+			{ name: 'wipe', description: '', inputSchema: text, annotations: { destructive: true } },
+			{ name: 'ping', description: '', inputSchema: { type: 'object', properties: {} } },
+			{ name: 'delete_page', description: '', inputSchema: text },
+		])
+		expect(options.map((option) => option.name)).toEqual(['send_email'])
 	})
 })

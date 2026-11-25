@@ -43,6 +43,7 @@ import {
 	draftFromTask,
 	emptyDraft,
 	jobFromDraft,
+	keepFormSettings,
 	taskFromDraft,
 } from './drafts.js'
 import { makeId, promptLabel } from './format.js'
@@ -855,7 +856,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		const forTeam = item ? item.team : Boolean(draft.forTeam) && jobs.teamAvailable
 		if (!draft.inputs?.trim()) throw new Error('Say what the task needs.')
 		jobTaskProblem(taskId, forTeam)
-		const job = jobFromDraft(
+		const drafted = jobFromDraft(
 			{ ...draft, forTeam },
 			{
 				taskId,
@@ -867,8 +868,11 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				fromTeamTask: taskId.startsWith(TEAM_TASK),
 			},
 		)
-		const noteProblem = noteNameProblem(destinationNote(job.destination, new Date()))
-		if (noteProblem) throw new Error(noteProblem)
+		const job = keepFormSettings(drafted, item?.job ?? undefined, draft.note)
+		if (job.destination.kind !== 'tool') {
+			const noteProblem = noteNameProblem(destinationNote(job.destination, new Date()))
+			if (noteProblem) throw new Error(noteProblem)
+		}
 		if (item) {
 			await jobs.edit(item.key, job, teamTaskVersion(taskId))
 			return { key: item.key, title: job.title }
@@ -1405,9 +1409,13 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 							makeInChat({ draft: emptyDraft(chooser), text })
 							setChooser(null)
 						}}
-						onForm={() => {
-							if (chooser === 'task') setTaskForm({ title: 'New task' })
-							else setJobForm({})
+						onForm={(text) => {
+							if (chooser === 'task')
+								setTaskForm({
+									title: 'New task',
+									...(text ? { initial: { description: text } } : {}),
+								})
+							else setJobForm(text ? { initial: { inputs: text } } : {})
 							setChooser(null)
 						}}
 						onClose={() => setChooser(null)}

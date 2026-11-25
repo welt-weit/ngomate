@@ -412,6 +412,27 @@ export function jobFromDraft(
 	}
 }
 
+/**
+ * A chat drafts notes only. A folder or connector tool to write to, and sending on its own, are set in
+ * the form, so a change made in the chat keeps them as they were; a new name for the file is taken.
+ */
+export function keepFormSettings(
+	drafted: JobFile,
+	before: JobFile | undefined,
+	note?: string,
+): JobFile {
+	const kept = before?.destination
+	return {
+		...drafted,
+		...(kept?.kind === 'file'
+			? { destination: { ...kept, name: note?.trim() || kept.name } }
+			: kept?.kind === 'tool'
+				? { destination: kept }
+				: {}),
+		...(before?.send ? { send: before.send } : {}),
+	}
+}
+
 /** A task as a draft, to change or copy it. Named tools stay named: nothing is widened by a change. */
 export function draftFromTask(
 	task: TaskFile,

@@ -77,7 +77,10 @@ export type JobFile = {
 export type JobOutcome = 'done' | 'warnings' | 'waiting' | 'held' | 'failed'
 
 export type JobRun = {
-	/** When it was due. Earlier than `ranAt` when the computer was off or the app closed. */
+	/**
+	 * When it was due. Earlier than `ranAt` when the computer was off or the app closed; the same as `ranAt`
+	 * for a run started before its date (Run now).
+	 */
 	dueAt: string
 	ranAt: string
 	outcome: JobOutcome
@@ -525,6 +528,11 @@ export function newJobState(job: JobFile, now: Date, taskVersion?: string): JobS
 
 export function isDue(state: JobState, now: Date): boolean {
 	return !state.paused && Date.parse(state.nextDue) <= now.getTime()
+}
+
+/** The date a run is for: when it was due, or when it ran if it was started before that (Run now). */
+export function runDueAt(state: JobState, ranAt: Date): Date {
+	return new Date(Math.min(Date.parse(state.nextDue), ranAt.getTime()))
 }
 
 /**

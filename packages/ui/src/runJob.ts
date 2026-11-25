@@ -11,6 +11,7 @@ import {
 	describeChange,
 	destinationNote,
 	latenessNote,
+	runDueAt,
 } from '@ngomate/core'
 import { makeId } from './format.js'
 import type { AnswerNotice } from './host.js'
@@ -161,10 +162,11 @@ export async function runJob(
 	signal: AbortSignal,
 	now: () => Date = () => new Date(),
 ): Promise<JobState> {
-	const dueAt = new Date(state.nextDue)
 	const ranAt = now()
+	// Run now, before its date: the run is for today, so {date} names today rather than the next date.
+	const dueAt = runDueAt(state, ranAt)
 	const run: JobRun = {
-		dueAt: state.nextDue,
+		dueAt: dueAt.toISOString(),
 		ranAt: ranAt.toISOString(),
 		outcome: 'done',
 		seen: false,
