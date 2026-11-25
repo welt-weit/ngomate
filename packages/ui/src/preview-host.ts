@@ -14,6 +14,7 @@ import {
 import {
 	type Conversation,
 	DEFAULT_SETTINGS,
+	type FilesHost,
 	type ModelHost,
 	type NgomateHost,
 	type OwnTaskStore,
@@ -221,11 +222,30 @@ export type FakeHostOptions = {
 	jobs?: Record<string, { text: string; state?: JobState }>
 	/** Tasks the person made, by id, as their files' text. */
 	ownTasks?: Record<string, string>
+	/** Files jobs write, by folder and name: given, a test can read what was written. */
+	files?: Map<string, string>
 	/** Voice input that "hears" this sentence; `installed` voice models are there from the start. */
 	voice?: { heard: string; installed?: string[] }
 }
 
 /** Jobs in memory, as the desktop app keeps them in files. */
+/** Folders in memory: the chosen one is always "/Made-up folder", and a taken name gets a number. */
+export function memoryFiles(written: Map<string, string>): FilesHost {
+	return {
+		chooseFolder: async () => '/Made-up folder',
+		async writeNew(folder, name, text) {
+			const [stem, extension] = name.includes('.')
+				? [name.slice(0, name.lastIndexOf('.')), name.slice(name.lastIndexOf('.'))]
+				: [name, '']
+			let candidate = name
+			for (let n = 2; written.has(`${folder}/${candidate}`); n++)
+				candidate = `${stem} (${n})${extension}`
+			written.set(`${folder}/${candidate}`, text)
+			return candidate
+		},
+	}
+}
+
 /** Voice input on made-up models: downloads finish at once, and every recording is heard as `heard`. */
 export function fakeVoice(options: { heard: string; installed?: string[] }): VoiceHost {
 	const installed = new Set(options.installed ?? [])
@@ -397,6 +417,7 @@ export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 		jobs: memoryJobStore(options.jobs),
 		ownTasks: memoryOwnTasks(options.ownTasks),
 		...(options.voice ? { voice: fakeVoice(options.voice) } : {}),
+		files: memoryFiles(options.files ?? new Map()),
 		models: options.models,
 		team: fakeTeams(options.teams ?? [], options.teamStorage),
 		loadSettings: async () => settings,

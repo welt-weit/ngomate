@@ -15,6 +15,7 @@ import {
 import {
 	type Conversation,
 	DEFAULT_SETTINGS,
+	type FilesHost,
 	type ModelHost,
 	type NgomateHost,
 	type OwnTaskStore,
@@ -22,6 +23,7 @@ import {
 	type Settings,
 	type TeamHost,
 	type VoiceHost,
+	type WakeHost,
 } from '@ngomate/ui'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
@@ -176,6 +178,19 @@ const models: ModelHost = {
 	stop: () => call('runtime_stop'),
 }
 
+/** Where jobs write results as files: a folder the person picks, new files only. */
+const files: FilesHost = {
+	chooseFolder: () => call('folder_choose'),
+	writeNew: (folder, name, text) => call('file_write_new', { folder, name, text }),
+}
+
+/** Starting NGOmate for jobs at their times while it is closed, through the system's own scheduler. */
+const wake: WakeHost = {
+	set: (times) => call('wake_set', { times }),
+	startedForJobs: () => call('wake_started_for_jobs'),
+	doneWithJobs: () => call('wake_done_with_jobs'),
+}
+
 /** Voice input with Whisper, built into the plugin. Its models download like the chat models. */
 const voice: VoiceHost = {
 	info: () => call('voice_info'),
@@ -251,6 +266,8 @@ export function createTauriHost(options: { appName: string; tasks: TaskFile[] })
 		jobs,
 		ownTasks,
 		voice,
+		files,
+		wake,
 		models,
 		team,
 		async loadSettings() {

@@ -161,4 +161,21 @@ describe('runTask with a limit on tool room', () => {
 		expect(callTool).not.toHaveBeenCalled()
 		expect(run.calls[0]?.outcome).toBe('not_allowed')
 	})
+
+	it('offers a tool asked for by name, though the request never mentions it', async () => {
+		const chat = vi.fn(async (_request: ChatRequest) => say)
+		await runTask({
+			model: { chat } as ModelClient,
+			tools: source,
+			profile: { id: 'c', instructions: 'Help.', readTools: [], writeTools: [], allTools: true },
+			input: 'Find a grant',
+			maxToolChars: 10_000,
+			offerTools: ['create_invoice', 'not_a_tool'],
+		})
+		const request = chat.mock.calls[0]?.[0] as ChatRequest
+		expect(request.tools.map((item) => item.name).sort()).toEqual([
+			'create_invoice',
+			'search_grants',
+		])
+	})
 })

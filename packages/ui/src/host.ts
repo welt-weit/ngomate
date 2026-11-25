@@ -51,6 +51,29 @@ export type DownloadProgress = {
 	phase: 'downloading' | 'verifying'
 }
 
+/**
+ * One time a day, a week or a month at which this computer starts NGOmate without a window to run jobs:
+ * hours and minutes on this computer's own clock. `weekday` 0 is Sunday; `day` is of the month.
+ */
+export type WakeTime = { hour: number; minute: number; weekday?: number; day?: number }
+
+/** Starts NGOmate at set times when it is closed: launchd, Task Scheduler or a systemd timer. */
+export interface WakeHost {
+	/** Replaces every time set before: an empty list removes the helper. */
+	set(times: WakeTime[]): Promise<void>
+	/** This run was started for jobs, without a window: it closes once they are done. */
+	startedForJobs(): Promise<boolean>
+	/** Closes the app, unless a window was opened meanwhile. */
+	doneWithJobs(): Promise<void>
+}
+
+export interface FilesHost {
+	/** Asks the person for a folder. Null if they cancel. */
+	chooseFolder(): Promise<string | null>
+	/** Writes a new file, never over one there: a taken name gets a number. Resolves to the name it got. */
+	writeNew(folder: string, name: string, text: string): Promise<string>
+}
+
 export type VoiceInfo = {
 	models: ModelEntry[]
 	/** The size that suits this computer: fetched on the first press of the microphone. */
@@ -153,6 +176,8 @@ export type Settings = {
 	madeIn?: Record<string, string>
 	/** The voice model chosen under Built-in tools; without one, the size that suits the computer. */
 	voiceModel?: string
+	/** Jobs this computer starts NGOmate for at their time when the app is closed, by key. */
+	jobWake?: Record<string, true>
 }
 
 /** Where a person's own tasks are kept: one Markdown file each, named by the task's id. */
@@ -373,6 +398,10 @@ export interface NgomateHost {
 	/** Tasks the person made. A host without it leaves this out, and only built-in and team tasks show. */
 	ownTasks?: OwnTaskStore
 	voice?: VoiceHost
+	/** Files a job writes its results to, in a folder the person chose. Left out, jobs write notes only. */
+	files?: FilesHost
+	/** Starting NGOmate for a job at its time. Left out, jobs run only while the app is open. */
+	wake?: WakeHost
 	/** Tells the person something finished while they may be looking elsewhere, as the system does. */
 	notify?(title: string, body: string): void
 	/** For a host with menus of its own: their commands, and what to show in them. */

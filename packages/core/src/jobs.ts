@@ -26,7 +26,23 @@ export type Schedule =
 	| { every: 'month'; day: number; time: string }
 
 /** Where a run's result is written: one of this person's notes, or the team's. */
-export type JobDestination = { kind: 'note' | 'team-note'; name: string }
+/**
+ * Where a run's result is written, approved when the job is made: one of this person's notes, the
+ * team's, a new file in a folder on this computer (never over one there), or one connector tool, called
+ * with the arguments fixed then and the result in one of them (`field`). `name` is the note's or file's
+ * name, `{date}` in it the day the run was due; for a tool, the tool's name.
+ */
+export type JobDestination =
+	| { kind: 'note' | 'team-note'; name: string }
+	| { kind: 'file'; name: string; folder: string }
+	| { kind: 'tool'; name: string; field: string; args: Record<string, string> }
+
+/**
+ * Sending to other people on its own, set by the person when the job is made: the one connector tool
+ * that sends, and its recipients, fixed. A call of that tool to exactly them, in a run whose checks found
+ * nothing, is made without asking; anything else waits for the person.
+ */
+export type JobSend = { tool: string; to: Record<string, string> }
 
 export type JobFile = {
 	id: string
@@ -47,6 +63,8 @@ export type JobFile = {
 	 * this computer's id for it. Run while another team is open, it is held rather than written there.
 	 */
 	team?: string
+	/** Without it, every message the job wants to send waits for the person (the default). */
+	send?: JobSend
 }
 
 /**
@@ -86,6 +104,10 @@ export type JobChange = {
 	decision: 'waiting' | 'made' | 'declined'
 	/** Why making it failed, when it did. */
 	error?: string
+	/** Made by the job itself: a message to the recipients fixed when the job was made. */
+	auto?: boolean
+	/** Why a message that would have gone on its own waits for the person instead. */
+	held?: string
 }
 
 /**
@@ -390,11 +412,44 @@ export function parseJobFile(source: string): JobFile {
 		title: required('title'),
 		task: required('task'),
 		schedule: parseSchedule(required('schedule')),
-		destination: parseDestination(required('destination')),
+		destination: parseDestination(required('destination'), fields),
 		inputs: (match[2] as string).trim(),
 		...zoneOf(fields.get('zone')),
 		...(fields.get('team') ? { team: fields.get('team') } : {}),
+		...(fields.get('send') ? { send: parseSend(fields) } : {}),
 	}
+}
+
+/** A connector tool's name as the job file may hold it. */
+const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,100}$/
+
+/** Arguments fixed when the job was made: one line of JSON, an object of short texts. */
+function fixedArgs(text: string | undefined, what: string): Record<string, string> {
+	if (!text) return {}
+	let value: unknown
+	try {
+		value = JSON.parse(text)
+	} catch {
+		throw new Error(`${what} is not readable: write it as {"name": "value"}.`)
+	}
+	if (!value || typeof value !== 'object' || Array.isArray(value))
+		throw new Error(`${what} is not readable: write it as {"name": "value"}.`)
+	const args: Record<string, string> = {}
+	for (const [key, item] of Object.entries(value)) {
+		if (typeof item !== 'string' || !TOOL_NAME.test(key) || item.length > 500)
+			throw new Error(`${what} holds something other than short texts: ${key}.`)
+		args[key] = item
+	}
+	return args
+}
+
+function parseSend(fields: Map<string, string>): JobSend {
+	const tool = fields.get('send') ?? ''
+	if (!TOOL_NAME.test(tool)) throw new Error(`Not a tool's name: ${tool}`)
+	const to = fixedArgs(fields.get('send-to'), 'send-to')
+	// Without recipients fixed, the model would pick them: never sent on its own then.
+	if (!Object.keys(to).length) throw new Error('send needs send-to: the recipients, fixed.')
+	return { tool, to }
 }
 
 function zoneOf(zone: string | undefined): { zone?: string } {
@@ -403,12 +458,29 @@ function zoneOf(zone: string | undefined): { zone?: string } {
 	return { zone }
 }
 
-function parseDestination(text: string): JobDestination {
+function parseDestination(text: string, fields: Map<string, string>): JobDestination {
 	const [kind, ...rest] = text.split(/\s+/)
 	const name = rest.join(' ').trim()
-	if ((kind !== 'note' && kind !== 'team-note') || !name)
-		throw new Error(`Not a destination: ${text}. Write note <name> or team-note <name>.`)
-	return { kind, name }
+	if (!name)
+		throw new Error(`Not a destination: ${text}. Write note, team-note, file or tool, then a name.`)
+	if (kind === 'note' || kind === 'team-note') return { kind, name }
+	if (kind === 'file') {
+		const folder = fields.get('folder') ?? ''
+		// A folder someone chose in a dialog: a whole path, never one relative to wherever the app runs.
+		if (!/^(\/|[A-Za-z]:[\\/])/.test(folder))
+			throw new Error('A file destination needs folder: a whole path.')
+		if (/[\\/:*?"<>|]/.test(name.replaceAll('{date}', '')))
+			throw new Error(`A file's name cannot hold / \\ : * ? " < > |: ${name}`)
+		return { kind, name, folder }
+	}
+	if (kind === 'tool') {
+		if (!TOOL_NAME.test(name)) throw new Error(`Not a tool's name: ${name}`)
+		const field = fields.get('tool-field') ?? ''
+		if (!TOOL_NAME.test(field))
+			throw new Error('A tool destination needs tool-field: where the result goes.')
+		return { kind, name, field, args: fixedArgs(fields.get('tool-args'), 'tool-args') }
+	}
+	throw new Error(`Not a destination: ${text}. Write note, team-note, file or tool, then a name.`)
 }
 
 /** What a job's id may hold: it names its files on every kind of storage. */
@@ -425,8 +497,18 @@ export function serializeJobFile(job: JobFile): string {
 		`task: ${oneLine(job.task)}`,
 		`schedule: ${formatSchedule(job.schedule)}`,
 		`destination: ${job.destination.kind} ${oneLine(job.destination.name)}`,
+		...(job.destination.kind === 'file' ? [`folder: ${oneLine(job.destination.folder)}`] : []),
+		...(job.destination.kind === 'tool'
+			? [
+					`tool-field: ${oneLine(job.destination.field)}`,
+					`tool-args: ${JSON.stringify(job.destination.args)}`,
+				]
+			: []),
 		...(job.zone ? [`zone: ${oneLine(job.zone)}`] : []),
 		...(job.team ? [`team: ${oneLine(job.team)}`] : []),
+		...(job.send
+			? [`send: ${oneLine(job.send.tool)}`, `send-to: ${JSON.stringify(job.send.to)}`]
+			: []),
 		'---',
 		job.inputs.trim(),
 		'',
@@ -477,7 +559,11 @@ export function afterFailure(state: JobState, job: JobFile, run: JobRun, now: Da
  * `{date}` in a note's name becomes the day the run was due, so each run can keep its own note. In the
  * job's zone when it has one, so every member's computer names a team run's note alike.
  */
-export function destinationNote(destination: JobDestination, dueAt: Date, zone?: string): string {
+export function destinationNote(
+	destination: JobDestination | { name: string },
+	dueAt: Date,
+	zone?: string,
+): string {
 	const date = zone
 		? wallClock(dueAt, zone)
 		: { year: dueAt.getFullYear(), month: dueAt.getMonth() + 1, day: dueAt.getDate() }

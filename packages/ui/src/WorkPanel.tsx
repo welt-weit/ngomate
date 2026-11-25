@@ -1,4 +1,10 @@
-import { type JobOutcome, type JobRun, describeChange, describeSchedule } from '@ngomate/core'
+import {
+	type JobFile,
+	type JobOutcome,
+	type JobRun,
+	describeChange,
+	describeSchedule,
+} from '@ngomate/core'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { RowActions } from './ActionMenu.js'
 import { startConversationDrag } from './TabBar.js'
@@ -98,6 +104,34 @@ const runTime = (iso: string) =>
 /** A job's run is kept as the conversation `job-<id>-run-<time>-<random>`: the id, or null for a chat. */
 export function jobOfRun(conversationId: string): string | null {
 	return conversationId.match(/^job-(.+)-run-[a-z0-9]+-[a-z0-9]+$/)?.[1] ?? null
+}
+
+/** Where a run's result went, for the run's tooltip. */
+function writtenTo(job: JobFile, name: string, team: boolean): string {
+	const kind = job.destination.kind
+	return kind === 'file'
+		? `Written to the file ${name}`
+		: kind === 'tool'
+			? `Sent to ${job.destination.name}`
+			: `Written to the ${team || kind === 'team-note' ? 'team note' : 'note'} ${name}`
+}
+
+/**
+ * Where a job's result goes and what it sends on its own, when that is more than a note: said under the
+ * job, so nobody has to open it to know a job sends to people.
+ */
+function whereItGoes(job: JobFile): string {
+	const destination = job.destination
+	const goes =
+		destination.kind === 'file'
+			? `Writes a new file each run to ${destination.folder}.`
+			: destination.kind === 'tool'
+				? `Writes its result with ${destination.name}.`
+				: ''
+	const sends = job.send
+		? ` Sends on its own with ${job.send.tool} to ${Object.values(job.send.to).join(', ')}.`
+		: ''
+	return `${goes}${sends}`.trim()
 }
 
 /** A sentence that ends in a full stop, whatever it was given. */
@@ -431,6 +465,7 @@ export function WorkPanel({
 					/>
 				</div>
 				<p className="ngm-side-note">{status}</p>
+				{job && whereItGoes(job) && <p className="ngm-side-note">{whereItGoes(job)}</p>}
 				{held?.reason && <p className="ngm-side-note">{held.reason}</p>}
 				{held?.waitsFor === 'task' && (
 					<Button variant="nav" onClick={() => jobs.onReadTask(item.key)}>
@@ -443,8 +478,10 @@ export function WorkPanel({
 							<div className="ngm-job-change" key={`${run.ranAt}/${index}`}>
 								{/* In full: what is allowed here is made exactly as asked. */}
 								<p className="ngm-side-note">
-									Asked to change: {describeChange(change, Number.POSITIVE_INFINITY)}
+									{change.auto ? 'Wanted to send: ' : 'Asked to change: '}
+									{describeChange(change, Number.POSITIVE_INFINITY)}
 								</p>
+								{change.held && <p className="ngm-side-note">{change.held}</p>}
 								{change.error && (
 									<p className="ngm-error" role="alert">
 										{change.error}
@@ -483,7 +520,9 @@ export function WorkPanel({
 							<Button
 								variant="nav"
 								key={run.ranAt}
-								title={run.reason ?? (run.note ? `Written to the note ${run.note}` : undefined)}
+								title={
+									run.reason ?? (run.note && job ? writtenTo(job, run.note, item.team) : undefined)
+								}
 								onClick={() => run.conversationId && jobs.onOpenRun(item.key, run.conversationId)}
 							>
 								{runTime(run.ranAt)} · {outcomeLabel(run, decidable(run))}
@@ -494,7 +533,7 @@ export function WorkPanel({
 							<Button
 								variant="nav"
 								key={run.ranAt}
-								title={`Written to the ${item.team || job?.destination.kind === 'team-note' ? 'team note' : 'note'} ${run.note}`}
+								title={job ? writtenTo(job, run.note, item.team) : `Written to ${run.note}`}
 								onClick={onOpenNotes}
 							>
 								{runTime(run.ranAt)} · {outcomeLabel(run, decidable(run))}
@@ -591,7 +630,7 @@ export function WorkPanel({
 				{jobs.list.length === 0 && (
 					<p className="ngm-work-empty">
 						A job runs a ready-made task on a schedule, such as new funding every Monday, while this
-						app is open, and writes the result to a note.
+						app is open, and writes the result to a note, a file or a connector you choose.
 					</p>
 				)}
 				{jobs.list.map((item) => jobSection(item, jobs))}

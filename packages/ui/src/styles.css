@@ -1015,7 +1015,9 @@ select.ngm-input {
 	font-size: 14px;
 }
 
-.ngm-inline {
+/* Also inside a form, whose labels are columns: a checkbox sits beside its words. */
+.ngm-inline,
+.ngm-form label.ngm-inline {
 	display: inline-flex;
 	flex-direction: row;
 	gap: var(--ngm-space-2);

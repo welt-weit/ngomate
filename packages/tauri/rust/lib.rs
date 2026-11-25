@@ -5,6 +5,7 @@ mod addons;
 mod catalog;
 mod documents;
 mod error;
+mod files;
 mod guard;
 mod models;
 mod runtime;
@@ -13,6 +14,7 @@ mod team;
 mod team_s3;
 mod team_webdav;
 mod voice;
+mod wake;
 
 use addons::Addons;
 use error::{Error, Result};
@@ -196,6 +198,59 @@ async fn team_folder_choose<R: TauriRuntime>(app: AppHandle<R>) -> Result<Option
     teams.add(team::Location::Folder { path: path.clone() }, new_team_id(), true);
     keep_teams(&app, &teams)?;
     Ok(Some(path))
+}
+
+/// Whether this run was started by the helper for jobs, and whether the person has opened the window since.
+#[derive(Default)]
+struct StartedForJobs {
+    started: std::sync::atomic::AtomicBool,
+    opened: std::sync::atomic::AtomicBool,
+}
+
+impl StartedForJobs {
+    fn hidden(&self) -> bool {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.started.load(SeqCst) && !self.opened.load(SeqCst)
+    }
+}
+
+/// Sets the times the helper starts NGOmate at for jobs, replacing those before. None removes it.
+#[tauri::command]
+async fn wake_set<R: TauriRuntime>(app: AppHandle<R>, times: Vec<wake::WakeTime>) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let home = app.path().home_dir().map_err(|err| Error::msg(err.to_string()))?;
+    tokio::task::spawn_blocking(move || wake::set(&exe, &home, &times))
+        .await
+        .map_err(|err| Error::msg(err.to_string()))?
+}
+
+/// True when this run was started for jobs and its window has not been opened: it closes when done.
+#[tauri::command]
+fn wake_started_for_jobs(started: State<'_, StartedForJobs>) -> bool {
+    started.hidden()
+}
+
+/// The jobs of a run started for them are done: the app closes, unless someone opened its window.
+#[tauri::command]
+fn wake_done_with_jobs<R: TauriRuntime>(app: AppHandle<R>, started: State<'_, StartedForJobs>) {
+    if started.hidden() {
+        app.exit(0);
+    }
+}
+
+/// A folder for a job's results, chosen by the person. Only its path is kept, in the job's file.
+#[tauri::command]
+async fn folder_choose<R: TauriRuntime>(app: AppHandle<R>) -> Result<Option<String>> {
+    let picked = app.dialog().file().set_title("Where the job's results go").blocking_pick_folder();
+    Ok(picked.and_then(|folder| folder.into_path().ok()).map(|path| path.to_string_lossy().into_owned()))
+}
+
+/// Writes a job's result as a new file in its folder, never over one there. Returns the name it got.
+#[tauri::command]
+async fn file_write_new(folder: String, name: String, text: String) -> Result<String> {
+    tokio::task::spawn_blocking(move || files::write_new(Path::new(&folder), &name, &text))
+        .await
+        .map_err(|err| Error::msg(err.to_string()))?
 }
 
 /// Adds a team reached over the network or through a connector, and makes it the active one. With a
@@ -719,6 +774,11 @@ async fn addon_stop(addons: State<'_, Addons>, id: String) -> Result<()> {
 pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
     Builder::new("ngomate")
         .invoke_handler(tauri::generate_handler![
+            folder_choose,
+            file_write_new,
+            wake_set,
+            wake_started_for_jobs,
+            wake_done_with_jobs,
             voice_info,
             voice_prepare,
             voice_transcribe,
@@ -763,6 +823,11 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             team_file_write,
         ])
         .setup(|app, _api| {
+            let started = StartedForJobs::default();
+            if std::env::args().any(|argument| argument == wake::RUN_JOBS_ARG) {
+                started.started.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            app.manage(started);
             app.manage(Runtime::default());
             app.manage(Downloads::default());
             app.manage(FolderChange::default());
@@ -770,7 +835,25 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             app.manage(std::sync::Arc::new(voice::Voice::default()));
             Ok(())
         })
+        .on_window_ready(|window| {
+            // Started for jobs: they run without a window, until the person opens it.
+            if window.state::<StartedForJobs>().hidden() {
+                let _ = window.hide();
+            }
+        })
         .on_event(|app, event| {
+            // Opened from the Dock while running for jobs: the window shows, and the app stays open.
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen { .. } = event {
+                let started = app.state::<StartedForJobs>();
+                if started.hidden() {
+                    started.opened.store(true, std::sync::atomic::Ordering::SeqCst);
+                    for window in app.webview_windows().values() {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
             // A model left running would hold gigabytes of memory after the window closed.
             if let RunEvent::Exit = event {
                 let runtime = app.state::<Runtime>();

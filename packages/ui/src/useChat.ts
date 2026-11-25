@@ -7,6 +7,7 @@ import {
 	type TaskProfile,
 	type TaskRun,
 	type TeamNotes,
+	type ToolDefinition,
 	type ToolSource,
 	type WriteRequest,
 	buildMemoryContext,
@@ -150,6 +151,8 @@ export type SendOptions = {
 	prompt?: { title: string; text: string }
 	/** Said to the model beside the date and the notes, such as when a job last ran. */
 	context?: string
+	/** Tools offered whatever the request says, such as a job's fixed send tool. */
+	offerTools?: string[]
 	/**
 	 * For a chat where a task or job is being made: what it may be drafted from. Taken only while the
 	 * conversation has a draft not yet saved; the model then gets the draft tool and nothing else.
@@ -233,6 +236,19 @@ export async function makeChange(
 			throw new Error(`No connector offers ${change.tool} now.`)
 		const result = await tools.callTool(change.tool, change.args)
 		if (result.isError) throw new Error(result.text || `${change.tool} did not work.`)
+	} finally {
+		await tools.close().catch(() => {})
+	}
+}
+
+/**
+ * The tools the connectors offer now, for picking one a job writes to or sends with. Write tools
+ * included: what is picked there is approved by making the job.
+ */
+export async function listConnectorTools(deps: ChatDeps): Promise<ToolDefinition[]> {
+	const tools = await connectTools(deps.host, deps.settings.addons, false, () => {}, deps.team)
+	try {
+		return await tools.listTools()
 	} finally {
 		await tools.close().catch(() => {})
 	}
@@ -461,6 +477,7 @@ export async function answerRequest(
 			maxToolResultChars: room.toolResult,
 			maxInputChars: room.input - room.tools,
 			maxToolChars: room.tools,
+			offerTools: options.offerTools,
 			maxOutputTokens: room.output,
 			confirmWrite: hooks.confirmWrite,
 			signal: hooks.signal,

@@ -150,6 +150,11 @@ export type RunTaskOptions = {
 	maxInputChars?: number
 	/** Room for tool descriptions. Without it, every tool of `allTools` goes with every message. */
 	maxToolChars?: number
+	/**
+	 * Offered whatever the words of the request: a job's fixed send tool, which its inputs need not name.
+	 * Still only when the task permits it, and only as far as there is room.
+	 */
+	offerTools?: string[]
 	/** Longest answer allowed per turn. */
 	maxOutputTokens?: number
 	/** Text from the host: team rules, the org's name. */
@@ -315,7 +320,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRun> {
 					permitted,
 					`${profile.toolHint ?? ''} ${input.slice(0, 1000)}`,
 					options.maxToolChars,
-					usedBefore,
+					[...usedBefore, ...(options.offerTools ?? [])],
 				)
 			: { tools: permitted.map(compactTool), didNotFit: [] }
 	// One set for the whole run: a changed set makes the model read the whole prompt again.

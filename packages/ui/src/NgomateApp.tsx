@@ -5,6 +5,7 @@ import {
 	TeamConflict,
 	createTeamJobStore,
 	destinationNote,
+	isDue,
 	isTimeZone,
 	jobId,
 	saveTeamTask,
@@ -24,7 +25,7 @@ import { RowActions } from './ActionMenu.js'
 import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatMaking, type ChatStart } from './Chat.js'
 import { MakeChooser } from './DraftCard.js'
-import { JobDialog, noteNameProblem } from './JobDialog.js'
+import { JobDialog, noteNameProblem, toolOptions } from './JobDialog.js'
 import { ProfileMenu } from './ProfileMenu.js'
 import { SettingsPage, type SettingsSection } from './Settings.js'
 import { TabBar, startConversationDrag } from './TabBar.js'
@@ -71,10 +72,12 @@ import {
 	usePrimitives,
 } from './primitives.js'
 import { selectAllInConversation } from './select-all.js'
+import { listConnectorTools } from './useChat.js'
 import { useIdleUnload } from './useIdleUnload.js'
 import { useJobs } from './useJobs.js'
 import { OWN_TASK_PREFIX, isOwnTask, useOwnTasks } from './useOwnTasks.js'
 import { type TeamTask, useTeam } from './useTeam.js'
+import { wakeList, wakeTimeOf } from './wakeTimes.js'
 
 /** The conversations, the notes, or the settings. */
 /** A page of what is set up once, open in a tab like a conversation. */
@@ -449,6 +452,54 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 			for (const id of ids) void removeRunRef.current(id).catch(() => {})
 		},
 	)
+
+	// The times this computer starts NGOmate for its jobs, kept in step with the jobs: worked out again
+	// from each job's next date whenever they change, and only once the jobs have been read, so a start
+	// with nothing read yet never removes the helper.
+	const lastWake = useRef<string | null>(null)
+	useEffect(() => {
+		const wake = host.wake
+		if (!wake || !settings || !jobs.loaded) return
+		const times = wakeList(
+			jobs.list.flatMap((item) =>
+				settings.jobWake?.[item.key] && item.job && item.state && !item.state.paused
+					? [wakeTimeOf(item.job.schedule, new Date(item.state.nextDue))]
+					: [],
+			),
+		)
+		const said = JSON.stringify(times)
+		if (said === lastWake.current) return
+		lastWake.current = said
+		wake.set(times).catch((err) => {
+			lastWake.current = null
+			console.error('The times to start NGOmate for jobs could not be set:', err)
+		})
+	}, [host, settings, jobs.loaded, jobs.list])
+
+	// Started by the helper for jobs, without a window: closes once nothing is due, after a moment for the
+	// team's jobs to be read; at most after the longest a run may take.
+	const [forJobs, setForJobs] = useState(false)
+	useEffect(() => {
+		host.wake?.startedForJobs().then(setForJobs, () => {})
+	}, [host])
+	useEffect(() => {
+		if (!forJobs || !jobs.loaded) return
+		const now = new Date()
+		const due =
+			jobs.running !== null ||
+			jobs.list.some(
+				(item) => item.state && !item.state.paused && !item.claimedBy && isDue(item.state, now),
+			)
+		if (due) return
+		const timer = setTimeout(() => void host.wake?.doneWithJobs(), 15_000)
+		return () => clearTimeout(timer)
+	}, [host, forJobs, jobs.loaded, jobs.running, jobs.list])
+	useEffect(() => {
+		if (!forJobs) return
+		const timer = setTimeout(() => void host.wake?.doneWithJobs(), 45 * 60_000)
+		return () => clearTimeout(timer)
+	}, [host, forJobs])
+
 	// New task or New job: say it in words, or fill in the form.
 	const [chooser, setChooser] = useState<Draft['kind'] | null>(null)
 	// The two forms, filled in or empty, and who waits for what was saved in them.
@@ -731,8 +782,15 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		})
 	const removeJob = (key: string) => {
 		forgetMadeIn('job', key)
+		setJobWake(key, false)
 		return jobs.remove(key)
 	}
+	/** Whether this computer starts NGOmate for a job at its time: a setting of this computer only. */
+	const setJobWake = (key: string, on: boolean) =>
+		patchSettings((current) => {
+			const { [key]: _was, ...rest } = current.jobWake ?? {}
+			return { jobWake: on ? { ...rest, [key]: true } : rest }
+		})
 
 	/** Saves a task from the form or a draft: the person's own, or the team's. */
 	const saveTask = async (
@@ -1395,6 +1453,17 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						initial={jobForm.initial}
 						editing={Boolean(jobForm.editing)}
 						zone={jobs.list.find((item) => item.key === jobForm.editing)?.job?.zone}
+						existing={jobs.list.find((item) => item.key === jobForm.editing)?.job ?? undefined}
+						chooseFolder={
+							host.files ? () => host.files?.chooseFolder() ?? Promise.resolve(null) : undefined
+						}
+						listTools={
+							settings.addons.some((addon) => addon.enabled)
+								? async () => toolOptions(await listConnectorTools(deps))
+								: undefined
+						}
+						canWake={Boolean(host.wake)}
+						wake={Boolean(jobForm.editing && settings.jobWake?.[jobForm.editing])}
 						onCreate={async (job, options) => {
 							const item = jobs.list.find((each) => each.key === jobForm.editing)
 							jobTaskProblem(job.task, item ? item.team : options.team)
@@ -1414,6 +1483,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 										: {}),
 								}
 								await jobs.edit(jobForm.editing, changed, teamTaskVersion(job.task))
+								setJobWake(jobForm.editing, options.wake)
 								formSaved.current = { key: jobForm.editing, title: job.title }
 								return
 							}
@@ -1421,10 +1491,9 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 								team: options.team,
 								taskVersion: options.taskVersion ?? undefined,
 							})
-							formSaved.current = {
-								key: `${options.team ? 'team' : 'own'}:${job.id}`,
-								title: job.title,
-							}
+							const key = `${options.team ? 'team' : 'own'}:${job.id}`
+							setJobWake(key, options.wake)
+							formSaved.current = { key, title: job.title }
 						}}
 						onClose={() => {
 							const saved = formSaved.current
