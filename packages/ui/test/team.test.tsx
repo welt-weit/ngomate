@@ -871,6 +871,7 @@ describe('the head of the sidebar', () => {
 		expect([...setUp.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
 			'Model',
 			'Connectors',
+			'AI-use policy',
 			'Notes',
 			'Teams',
 			'About',

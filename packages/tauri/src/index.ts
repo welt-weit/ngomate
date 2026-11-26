@@ -296,6 +296,16 @@ export function createTauriHost(options: { appName: string; tasks: TaskFile[] })
 		removeConversation: (id) => call('store_remove', { area: 'conversations', name: id }),
 		pickDocument: () => call<PickedDocument | null>('pick_document'),
 		saveDocument: (suggestedName, text) => call('save_document', { suggestedName, text }),
+		async fetchText(url) {
+			const response = await tauriFetch(url, { signal: AbortSignal.timeout(20_000) })
+			if (!response.ok) throw new Error(`${new URL(url).host} answered ${response.status}.`)
+			return response.text()
+		},
+		managedPolicy: () => call<string | null>('managed_policy'),
+		policyRecord: {
+			read: () => call<string | null>('store_read', { area: 'settings', name: 'policy-record' }),
+			write: (text) => call('store_write', { area: 'settings', name: 'policy-record', text }),
+		},
 		createModelClient(baseUrl, model, apiKey) {
 			return createOpenAiCompatibleClient({
 				baseUrl,

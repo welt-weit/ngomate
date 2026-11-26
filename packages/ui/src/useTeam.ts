@@ -18,6 +18,8 @@ export type Team = {
 	/** Every team this person is in, and which is active. */
 	memberships: TeamMembership[]
 	activeId: string | null
+	/** The active team's file has been looked for, so its policy, if any, is known. */
+	fileRead: boolean
 	/** False when the active team's storage lets the last save win over someone else's change. */
 	refusesOverwrites: boolean
 	switchTo(id: string): Promise<void>
@@ -108,6 +110,8 @@ export function useTeam(host: NgomateHost, addons: Addon[] = []): Team {
 	const [activeId, setActiveId] = useState<string | null>(null)
 	const [location, setLocation] = useState<TeamLocation | null>(null)
 	const [file, setFile] = useState<TeamFile | null>(null)
+	// The team whose file was last looked for, found or not: until then its policy is not known yet.
+	const [readFor, setReadFor] = useState<string | null | undefined>(undefined)
 	const [version, setVersion] = useState<string | null>(null)
 	const [problem, setProblem] = useState<string | null>(null)
 	const [tasks, setTasks] = useState<TeamTask[]>([])
@@ -140,6 +144,7 @@ export function useTeam(host: NgomateHost, addons: Addon[] = []): Team {
 		if (!where) {
 			reset()
 			setProblem(null)
+			setReadFor(listed.active)
 			return
 		}
 		if (!store) {
@@ -193,6 +198,8 @@ export function useTeam(host: NgomateHost, addons: Addon[] = []): Team {
 			setBrokenTasks(broken)
 		} catch (err) {
 			if (current()) setProblem(message(err))
+		} finally {
+			if (current()) setReadFor(listed.active)
 		}
 	}, [host, store, isConnector])
 
@@ -233,6 +240,7 @@ export function useTeam(host: NgomateHost, addons: Addon[] = []): Team {
 	return {
 		memberships,
 		activeId,
+		fileRead: readFor !== undefined && readFor === activeId,
 		refusesOverwrites:
 			memberships.find((membership) => membership.id === activeId)?.refusesOverwrites ?? true,
 		switchTo,

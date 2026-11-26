@@ -50,4 +50,5 @@ permissions = [
   "allow-team-remove",
   "allow-team-file-read",
   "allow-team-file-write",
+  "allow-managed-policy",
 ]

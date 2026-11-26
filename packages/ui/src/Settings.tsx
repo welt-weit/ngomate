@@ -2,7 +2,7 @@ import { type ReactNode, useState } from 'react'
 import type { NgomateHost, Settings } from './host.js'
 import { usePrimitives } from './primitives.js'
 
-export type SettingsSection = 'you' | 'model' | 'addons' | 'tools' | 'team' | 'about'
+export type SettingsSection = 'you' | 'model' | 'addons' | 'tools' | 'policy' | 'team' | 'about'
 
 /** The person: how a team sees them. Kept on this computer and in the teams they write to. */
 function YouSection({

@@ -7,12 +7,10 @@
 		".": {
 			"types": "./src/index.ts",
 			"default": "./dist/index.js"
-		}
+		},
+		"./schema/ai-use-policy.schema.json": "./schema/ai-use-policy.schema.json"
 	},
-	"files": [
-		"dist",
-		"src"
-	],
+	"files": ["dist", "src", "schema"],
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc --noEmit"

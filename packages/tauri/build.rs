@@ -46,6 +46,7 @@ const COMMANDS: &[&str] = &[
     "team_remove",
     "team_file_read",
     "team_file_write",
+    "managed_policy",
 ];
 
 fn main() {

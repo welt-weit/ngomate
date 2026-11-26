@@ -1,4 +1,4 @@
-import type { ToolSource } from './mcp.js'
+import type { CallContext, ToolSource } from './mcp.js'
 import type { WriteChoice } from './model.js'
 import { type TeamNotes, chooseTeamNotes } from './team.js'
 
@@ -28,6 +28,8 @@ export function memoryNoteName(raw: string): string {
 const LIST_TOOL = 'list_memory'
 const READ_TOOL = 'read_memory'
 const SAVE_TOOL = 'save_memory'
+/** The tool that saves a note, for a host that treats a note kept here apart from what leaves. */
+export const SAVE_NOTE_TOOL = SAVE_TOOL
 /** How a team note is named to the model, apart from the person's own. */
 const TEAM_PREFIX = 'team/'
 
@@ -36,6 +38,19 @@ export const SAVE_CHOICES: WriteChoice[] = [
 	{ id: 'me', label: 'Save for me' },
 	{ id: 'team', label: 'Save for the team' },
 ]
+
+/**
+ * Whether a call to the note tools reaches the team's notes rather than this person's own: a save the
+ * person sent to the team, or a note named as a team note.
+ */
+export function reachesTeamNotes(
+	name: string,
+	args: Record<string, unknown>,
+	context?: CallContext,
+): boolean {
+	if (name === SAVE_TOOL && context?.choice === 'team') return true
+	return typeof args.name === 'string' && teamName(args.name) !== null
+}
 
 function teamName(given: string): string | null {
 	return given.toLowerCase().startsWith(TEAM_PREFIX) ? given.slice(TEAM_PREFIX.length) : null

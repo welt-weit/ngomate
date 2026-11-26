@@ -456,6 +456,30 @@ fn secret_delete(name: String) -> Result<()> {
     }
 }
 
+/// Where an organisation puts the AI-use policy its computers keep to: a system folder only an
+/// administrator can write, so the person using the app cannot change it from there.
+fn managed_policy_path() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        Some(PathBuf::from("/Library/Application Support/NGOmate/policy.json"))
+    } else if cfg!(target_os = "windows") {
+        std::env::var_os("ProgramData").map(|base| PathBuf::from(base).join("NGOmate").join("policy.json"))
+    } else {
+        Some(PathBuf::from("/etc/ngomate/policy.json"))
+    }
+}
+
+/// The organisation's policy as text, or nothing when there is none. Only ever read, never written.
+#[tauri::command]
+fn managed_policy() -> Result<Option<String>> {
+    let Some(path) = managed_policy_path() else { return Ok(None) };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        // There but unreadable: the app treats it as the strictest policy rather than as none.
+        Err(err) => Ok(Some(format!("unreadable: {err}"))),
+    }
+}
+
 /// The dialog runs here rather than in the page, so the page can only read what the person picked.
 #[tauri::command]
 async fn pick_document<R: TauriRuntime>(app: AppHandle<R>) -> Result<Option<documents::Document>> {
@@ -821,6 +845,7 @@ pub fn init<R: TauriRuntime>() -> TauriPlugin<R> {
             team_remove,
             team_file_read,
             team_file_write,
+            managed_policy,
         ])
         .setup(|app, _api| {
             let started = StartedForJobs::default();

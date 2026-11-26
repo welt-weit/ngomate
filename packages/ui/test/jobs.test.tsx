@@ -452,6 +452,31 @@ describe('the chats list', () => {
 })
 
 describe('a team job held elsewhere', () => {
+	it('waits to run until the policy set for this computer has been looked for', async () => {
+		const due = new Date(Date.now() - 60_000).toISOString()
+		const host = createFakeHost({
+			replies: [say('Own draft.')],
+			jobs: {
+				mine: {
+					text: '---\nid: mine\ntitle: Own\ntask: draft-proposal-section\nschedule: daily 08:00\ndestination: note Own\n---\nNotes.\n',
+					state: { nextDue: due, runs: [] },
+				},
+			},
+		})
+		let found: (text: string | null) => void = () => {}
+		host.managedPolicy = () =>
+			new Promise((resolve) => {
+				found = resolve
+			})
+		render(<NgomateApp host={host} />)
+		await new Promise((resolve) => setTimeout(resolve, 300))
+		expect(await host.memory.read('Own')).toBeNull()
+		found(null)
+		await waitFor(async () => expect(await host.memory.read('Own')).toMatch(/Own draft\./), {
+			timeout: 5000,
+		})
+	})
+
 	it("is passed over, so this person's due job still runs", async () => {
 		const due = new Date(Date.now() - 60_000).toISOString()
 		const host = createFakeHost({

@@ -1,3 +1,4 @@
+import { type PolicyFile, ceilingPolicy } from './policy.js'
 import { wordsOf } from './toolChoice.js'
 
 /** The file at the top of a team's storage that says what the team is. */
@@ -5,7 +6,7 @@ export const TEAM_FILE = 'ngomate-team.json'
 const TEAM_FORMAT = 1
 
 /** Jobs the team shares sit beside its tasks, and count with them toward the tasks limit. */
-export type TeamArea = 'notes' | 'tasks' | 'jobs' | 'job-states'
+export type TeamArea = 'notes' | 'tasks' | 'jobs' | 'job-states' | 'policy-counts'
 
 export type TeamLimits = {
 	/** All team notes together. */
@@ -32,6 +33,11 @@ export type TeamFile = {
 	createdBy: string | null
 	limits: TeamLimits
 	connectors: RecommendedConnector[]
+	/**
+	 * The team's AI-use policy, the least every member keeps to: for each class the stricter of it and a
+	 * member's own wins. Left out when the team has none.
+	 */
+	policy?: PolicyFile
 }
 
 export function newTeamFile(name: string, createdBy: string | null): TeamFile {
@@ -107,7 +113,13 @@ export function parseTeamFile(text: string): TeamFile {
 			}))
 			.filter((item) => item.name && isAllowedAddress(item.url))
 			.slice(0, 20),
+		...(data.policy === undefined ? {} : { policy: teamPolicy(data.policy) }),
 	}
+}
+
+/** A team's policy as written, or Strict when it cannot be read: a ceiling that fails must fail safe. */
+function teamPolicy(value: unknown): PolicyFile {
+	return ceilingPolicy(JSON.stringify(value))
 }
 
 export function serializeTeamFile(team: TeamFile): string {

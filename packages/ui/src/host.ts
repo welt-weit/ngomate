@@ -1,10 +1,13 @@
 import type {
 	ChatMessage,
+	DataClass,
 	FigureProblem,
 	JobStore,
 	MemoryStore,
 	ModelClient,
 	ModelTiming,
+	PolicyAction,
+	PolicyFile,
 	TaskFile,
 	TeamFile,
 	TeamNoteCopies,
@@ -14,6 +17,7 @@ import type {
 } from '@ngomate/core'
 import type { Draft } from './drafts.js'
 import type { StoredLayout } from './layout.js'
+import type { StandIn } from './standIns.js'
 
 /** One model the app offers. Sizes in bytes. */
 export type ModelEntry = {
@@ -178,6 +182,28 @@ export type Settings = {
 	voiceModel?: string
 	/** Jobs this computer starts NGOmate for at their time when the app is closed, by key. */
 	jobWake?: Record<string, true>
+	/** The AI-use policy this person keeps to on this computer. Without one, nothing is held back. */
+	policy?: PolicyFile
+	/** How sensitive what is in each place is, for the policy. Unlabelled is internal. */
+	labels?: PolicyLabels
+	/** This computer's random id for its counts in a team's storage (`teamCounts.ts`); never a name. */
+	countsId?: string
+	/** The person turned the AI-use policy off; without this, Standard applies (`DEFAULT_POLICY`). */
+	policyOff?: boolean
+	/** The questions about what each place holds were answered or put off, so they are not asked again. */
+	labelsAsked?: boolean
+}
+
+/** Labels sit on a few places, set once, never on single items. */
+export type PolicyLabels = {
+	/** This person's own notes. */
+	notes?: DataClass
+	/** A newly attached document, until it is labelled otherwise. */
+	documents?: DataClass
+	/** Each team's notes and tasks, by the team's id on this computer. */
+	teams?: Record<string, DataClass>
+	/** What each connector's results count as, by the connector's id. */
+	connectors?: Record<string, DataClass>
 }
 
 /** Where a person's own tasks are kept: one Markdown file each, named by the task's id. */
@@ -204,9 +230,49 @@ export type Conversation = {
 	tasks?: Record<number, string>
 	/** A task or job being made in this chat, shown as a card above it until it is saved or discarded. */
 	draft?: Draft
+	/** Every class of data the conversation has held, for the policy: once in it, it stays in it. */
+	classes?: DataClass[]
+	/**
+	 * What the person confirmed, as the AI-use policy asked: data up to this class may leave, to the model
+	 * server too when `model`. A later message holding more, or going further, is asked about again.
+	 */
+	reviewedFor?: ReviewedFor
+	/** The person chose to keep this conversation on this computer, policy or not. */
+	keepHere?: true
+	/** What the person said this conversation counts as; they can take it back. */
+	countsAs?: DataClass
+	/** Who the conversation is about and the stand-ins sent instead. Never leaves this computer. */
+	standIns?: StandIn[]
+	/** What the person chose to send as it is when asked, so it is not offered again. */
+	sentAsIs?: string[]
+}
+
+/** What a yes before leaving covered. */
+export type ReviewedFor = { dataClass: DataClass; model: boolean }
+
+/** What the AI-use policy did, or would have done, about an answer. */
+export type PolicyNotice = {
+	/** What leaving gets under the policy: kept on the local model, confirmed first, or refused. */
+	action: PolicyAction
+	/** The most sensitive class in the conversation, which decided it. */
+	dataClass: DataClass
+	/** What would have left the computer: the conversation to a model server, a call to a connector. */
+	where: ('model' | 'connector')[]
+	/** The policy only watches: nothing was held back. */
+	observed: boolean
+	/** The template the policy was made from when this was decided. */
+	template?: string
+	/** The model on this computer that answered instead of the model server. */
+	localModel?: string
 }
 
 export type AnswerNotice = {
+	/** What the AI-use policy did, or would have done, about this answer. */
+	policy?: PolicyNotice
+	/** Kept on this computer because the person chose so, answered by this model when it was not theirs. */
+	keptHere?: { model?: string }
+	/** How many details that say who someone is went out as stand-ins. */
+	tookOut?: number
 	unsourcedDates: string[]
 	unsourcedLinks: string[]
 	checkFigures: boolean
@@ -255,6 +321,8 @@ export type PickedDocument = {
 	text: string
 	/** The file had more than could be read. */
 	truncated: boolean
+	/** How sensitive it is, for the policy. Without one, the label for documents, else internal. */
+	dataClass?: DataClass
 }
 
 /** A newer version of the app that the host can install. */
@@ -374,6 +442,15 @@ export interface NgomateHost {
 	memory: MemoryStore
 	loadSettings(): Promise<Settings>
 	saveSettings(settings: Settings): Promise<void>
+	/** Reads a public page as text, past the window's limits on where it may fetch from. */
+	fetchText?(url: string): Promise<string>
+	/**
+	 * The AI-use policy an organisation set for this computer in a system folder, as text; null when there
+	 * is none. It is a ceiling like a team's, and nothing in the app can change it.
+	 */
+	managedPolicy?(): Promise<string | null>
+	/** The local record of what the AI-use policy held back, as text; kept on this computer only. */
+	policyRecord?: { read(): Promise<string | null>; write(text: string): Promise<void> }
 	listConversations(): Promise<{ id: string; title: string; updatedAt: string }[]>
 	readConversation(id: string): Promise<Conversation | null>
 	writeConversation(conversation: Conversation): Promise<void>

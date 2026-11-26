@@ -1,4 +1,12 @@
-import type { ChatMessage, PromptDefinition, TaskFile } from '@ngomate/core'
+import {
+	CLASS_WORDS,
+	type ChatMessage,
+	DATA_CLASSES,
+	type DataClass,
+	type PromptDefinition,
+	type TaskFile,
+	decide,
+} from '@ngomate/core'
 import {
 	type FormEvent,
 	type KeyboardEvent,
@@ -15,11 +23,147 @@ import { type ActionItem, ActionMenu } from './ActionMenu.js'
 import { DraftCard } from './DraftCard.js'
 import { type Draft, type MakingContext, emptyDraft } from './drafts.js'
 import { formatBytes, promptLabel } from './format.js'
-import type { AnswerNotice, AnswerTiming, NgomateHost, PickedDocument } from './host.js'
+import type {
+	AnswerNotice,
+	AnswerTiming,
+	NgomateHost,
+	PickedDocument,
+	PolicyNotice,
+} from './host.js'
 import { ICONS, Icon } from './icons.js'
+import {
+	composerStatus,
+	documentClass,
+	effectivePolicy,
+	keptHereText,
+	labelled,
+	looksPersonal,
+	modelApproved,
+	onThisComputer,
+	ownPolicy,
+	policyNoticeText,
+	reviewCovers,
+} from './policyCheck.js'
 import { usePrimitives } from './primitives.js'
-import { type ChatDeps, type PendingWrite, useChat } from './useChat.js'
+import { type Identifier, type IdentifierKind, addStandIns, standIn } from './standIns.js'
+import {
+	type ChatDeps,
+	type LeaveAnswer,
+	type PendingWrite,
+	heldBefore,
+	useChat,
+} from './useChat.js'
 import { WAVE_BARS, useVoice } from './useVoice.js'
+
+/** The AI-use policy asking once whether this conversation may leave the computer. */
+const KIND_WORDS: Record<IdentifierKind, string> = {
+	name: 'name',
+	email: 'email address',
+	phone: 'phone number',
+}
+
+/**
+ * Asked once in a conversation before it leaves, as the AI-use policy wants: what in it says who
+ * someone is, ticked to go out as a stand-in, names the person adds, and the message as it will leave.
+ */
+function LeaveConfirmation({
+	request,
+}: {
+	request: {
+		notice: PolicyNotice
+		found: Identifier[]
+		message: string
+		resolve: (answer: LeaveAnswer) => void
+	}
+}) {
+	const { Button, Checkbox, Input } = usePrimitives()
+	const where = request.notice.where.includes('model') ? 'the model server' : 'a connector'
+	const redact = request.notice.action === 'redact'
+	const [items, setItems] = useState(() => request.found.map((each) => ({ ...each, take: true })))
+	const [name, setName] = useState('')
+	const takeOut = items.filter((each) => each.take)
+	const add = () => {
+		const text = name.trim()
+		if (text && !items.some((each) => each.text === text))
+			setItems((known) => [...known, { text, kind: 'name', take: true }])
+		setName('')
+	}
+	const leaving = standIn(request.message, addStandIns([], takeOut))
+	return (
+		<div
+			className="ngm-confirm"
+			role="alertdialog"
+			aria-label="Confirm before it leaves this computer"
+		>
+			<strong>Send this conversation to {where}?</strong>
+			<p className="ngm-muted">
+				It holds {CLASS_WORDS[request.notice.dataClass].toLowerCase()}
+				{redact
+					? '. Your AI-use policy lets it leave only without names or anything else that says who someone is.'
+					: ', which your AI-use policy lets leave this computer only once you confirm.'}{' '}
+				What you tick goes out as a stand-in such as [PERSON_1], in the message, its documents and
+				what was said before; the real ones stay here and are shown again in the answer. You are
+				asked once in this conversation.
+			</p>
+			{items.length > 0 && (
+				<div className="ngm-stand-ins">
+					{items.map((each, index) => (
+						<label className="ngm-tool-switch" key={each.text}>
+							<Checkbox
+								checked={each.take}
+								onChange={(event) =>
+									setItems((known) =>
+										known.map((item, at) =>
+											at === index ? { ...item, take: event.target.checked } : item,
+										),
+									)
+								}
+							/>
+							<span>
+								{each.text} <span className="ngm-muted">({KIND_WORDS[each.kind]})</span>
+							</span>
+						</label>
+					))}
+				</div>
+			)}
+			<div className="ngm-row">
+				<Input
+					aria-label="A name to take out"
+					placeholder="For example: a name it did not find"
+					value={name}
+					onChange={(event) => setName(event.target.value)}
+					onKeyDown={(event) => {
+						if (event.key === 'Enter') {
+							event.preventDefault()
+							add()
+						}
+					}}
+				/>
+				<Button onClick={add} disabled={!name.trim()}>
+					Take out
+				</Button>
+			</div>
+			{request.message && (
+				<p className="ngm-stand-in-preview">
+					<span className="ngm-muted">Your message leaves as: </span>
+					{leaving}
+				</p>
+			)}
+			{redact && (
+				<p className="ngm-muted">
+					Names are found only when you add them, and a role and a place can still say who someone
+					is: you are the check.
+				</p>
+			)}
+			<div className="ngm-row">
+				<Button onClick={() => request.resolve(false)}>Don't send</Button>
+				<Button variant="primary" onClick={() => request.resolve({ takeOut })}>
+					Send
+				</Button>
+			</div>
+		</div>
+	)
+}
 
 function WriteConfirmation({ request }: { request: PendingWrite }) {
 	const { Button } = usePrimitives()
@@ -61,6 +205,9 @@ function WriteConfirmation({ request }: { request: PendingWrite }) {
 export function noticeSaysSomething(notice: AnswerNotice): boolean {
 	return Boolean(
 		notice.stopped ||
+			notice.policy ||
+			notice.keptHere ||
+			notice.tookOut ||
 			notice.knowledgeEntries?.length ||
 			notice.knowledgeUnavailable ||
 			notice.cutOff ||
@@ -79,6 +226,15 @@ function Notice({ notice }: { notice: AnswerNotice }) {
 	if (!noticeSaysSomething(notice)) return null
 	return (
 		<div className="ngm-notice">
+			{notice.policy && <p className="ngm-policy-line">{policyNoticeText(notice.policy)}</p>}
+			{notice.keptHere && <p className="ngm-policy-line">{keptHereText(notice.keptHere)}</p>}
+			{(notice.tookOut ?? 0) > 0 && (
+				<p className="ngm-policy-line">
+					{notice.tookOut === 1
+						? 'One detail that says who someone is went out as a stand-in, and is shown here again.'
+						: `${notice.tookOut} details that say who someone is went out as stand-ins, and are shown here again.`}
+				</p>
+			)}
 			{notice.stopped && <p>{notice.stopped}</p>}
 			{(notice.knowledgeEntries?.length ?? 0) > 0 && (
 				<p>Looked up in the knowledge base: {notice.knowledgeEntries?.join(', ')}.</p>
@@ -394,7 +550,7 @@ export function Chat({
 	attachRequest?: number
 	making?: ChatMaking
 }) {
-	const { Button, TextArea, Chip, Dialog } = usePrimitives()
+	const { Button, Checkbox, TextArea, Chip, Dialog, Select } = usePrimitives()
 	const chat = useChat(deps, conversationId)
 	const [text, setText] = useState('')
 	const [documents, setDocuments] = useState<PickedDocument[]>([])
@@ -511,6 +667,49 @@ export function Chat({
 		if (field) fitToText(field)
 	}, [text])
 
+	// The AI-use policy, before anything is sent: where this conversation will go, and a warning when
+	// the typed text looks like it names someone while the conversation does not count as personal.
+	const policy = effectivePolicy(ownPolicy(deps.settings), deps.team?.policy, deps.managedPolicy)
+	const [hasNotes, setHasNotes] = useState(false)
+	// Keyed on whether there is a policy: a combined one is a new object on every render.
+	const hasPolicy = Boolean(policy)
+	useEffect(() => {
+		if (!hasPolicy) return
+		let live = true
+		deps.host.memory
+			.list()
+			.then((notes) => live && setHasNotes(notes.length > 0))
+			.catch((err) => console.error('Your notes could not be listed for the policy:', err))
+		return () => {
+			live = false
+		}
+	}, [hasPolicy, deps.host])
+	const modelLocal = onThisComputer(deps.settings.model)
+	const countsAs = chat.conversation.countsAs
+	const held = policy
+		? heldBefore(deps, {
+				earlier: [...(chat.conversation.classes ?? []), ...(countsAs ? [countsAs] : [])],
+				documents: [...(chat.conversation.documents ?? []), ...documents],
+				notesRead: !(draft && !draft.saved && making) && (Boolean(deps.team) || hasNotes),
+			})
+		: []
+	const keepHere = Boolean(chat.conversation.keepHere)
+	// Only worth offering when something could leave: a model server, or a connector switched on.
+	const canLeave = !modelLocal || deps.settings.addons.some((addon) => addon.enabled)
+	const status = composerStatus(policy, held, {
+		modelLocal,
+		modelApproved: modelApproved(policy, deps.settings.model),
+		reviewed: reviewCovers(chat.conversation.reviewedFor, held, !modelLocal),
+		keepHere,
+	})
+	const personalFound =
+		policy &&
+		!held.some((each) => DATA_CLASSES.indexOf(each) >= DATA_CLASSES.indexOf('personal')) &&
+		!keepHere &&
+		decide(policy, 'personal', 'desktop_remote') !== 'allow'
+			? looksPersonal(text)
+			: []
+
 	const submit = async (event?: FormEvent) => {
 		event?.preventDefault()
 		// Not while a draft is being saved: the answer would put the unsaved draft back over it.
@@ -539,7 +738,9 @@ export function Chat({
 		setFileProblem(null)
 		try {
 			const picked = await deps.host.pickDocument()
-			if (picked) setDocuments((known) => [...known, picked])
+			// Labelled as it is attached, so changing the label for documents later relabels none.
+			const dataClass = policy ? labelled(deps.settings.labels?.documents) : undefined
+			if (picked) setDocuments((known) => [...known, dataClass ? { ...picked, dataClass } : picked])
 		} catch (err) {
 			onProblem(err)
 		}
@@ -672,6 +873,7 @@ export function Chat({
 						</div>
 					))}
 				{chat.pendingWrite && <WriteConfirmation request={chat.pendingWrite} />}
+				{chat.pendingLeave && <LeaveConfirmation request={chat.pendingLeave} />}
 				{chat.error && (
 					<p className="ngm-error" role="alert">
 						{chat.error}
@@ -733,6 +935,26 @@ export function Chat({
 						>
 							Remove
 						</Button>
+						{policy && (
+							<label className="ngm-inline ngm-counts-as">
+								Counts as
+								<Select
+									value={documentClass(document, deps.settings.labels)}
+									onChange={(event) => {
+										const dataClass = event.target.value as DataClass
+										setDocuments((known) =>
+											known.map((each, at) => (at === index ? { ...each, dataClass } : each)),
+										)
+									}}
+								>
+									{DATA_CLASSES.map((each) => (
+										<option key={each} value={each}>
+											{CLASS_WORDS[each]}
+										</option>
+									))}
+								</Select>
+							</label>
+						)}
 						{document.truncated ? (
 							<span className="ngm-muted">
 								Very long: only the first part of the file can be read.
@@ -744,6 +966,45 @@ export function Chat({
 						)}
 					</div>
 				))}
+				{personalFound.length > 0 && (
+					<output className="ngm-chip-line ngm-policy-warning">
+						<span>
+							This message holds {personalFound.join(' and ')}, which may say who someone is. Your
+							AI-use policy treats personal data differently, but this conversation does not count
+							as personal.
+						</span>
+						<Button disabled={chat.busy} onClick={() => void chat.setCountsAs('personal')}>
+							Count it as personal
+						</Button>
+					</output>
+				)}
+				{countsAs && (
+					<div className="ngm-chip-line ngm-policy-warning">
+						<span className="ngm-muted">
+							This conversation counts as {CLASS_WORDS[countsAs].toLowerCase()}, as you said.
+						</span>
+						<Button
+							variant="quiet"
+							disabled={chat.busy}
+							onClick={() => void chat.setCountsAs(undefined)}
+						>
+							Undo
+						</Button>
+					</div>
+				)}
+				{status && <output className="ngm-muted ngm-policy-status">{status}</output>}
+				{(canLeave || keepHere) && (
+					<div className="ngm-chip-line ngm-policy-warning">
+						<label className="ngm-tool-switch">
+							<Checkbox
+								disabled={chat.busy}
+								checked={keepHere}
+								onChange={(event) => void chat.setKeepHere(event.target.checked)}
+							/>
+							<span>Keep this one on this computer</span>
+						</label>
+					</div>
+				)}
 				{voice.status.kind !== 'idle' && (
 					<output className="ngm-voice-line">
 						{voice.status.kind === 'listening' && <VoiceWave levels={voice.levels} />}

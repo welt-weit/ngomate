@@ -2,7 +2,7 @@
 //! Dropbox, Nextcloud, Syncthing. The app only reads and writes files; moving them is the sync app's job.
 //!
 //! Only the folder the person picked in a native dialog is ever touched, and inside it only `notes/`,
-//! `tasks/`, `jobs/`, `job-states/` and the team file, so the interface cannot point this anywhere else.
+//! `tasks/`, `jobs/`, `job-states/`, `policy-counts/` and the team file, so the interface cannot point this anywhere else.
 
 use crate::error::{Error, Result};
 use crate::store::check_name;
@@ -252,6 +252,8 @@ pub enum Area {
     /// Jobs the team shares, as Markdown beside its tasks, and their state as JSON in its own folder.
     Jobs,
     JobStates,
+    /// Each computer's monthly counts of what the AI-use policy held back: numbers only, no content.
+    PolicyCounts,
 }
 
 impl Area {
@@ -261,6 +263,7 @@ impl Area {
             "tasks" => Ok(Area::Tasks),
             "jobs" => Ok(Area::Jobs),
             "job-states" => Ok(Area::JobStates),
+            "policy-counts" => Ok(Area::PolicyCounts),
             _ => Err(Error::msg(format!("Unknown team area {name}"))),
         }
     }
@@ -271,13 +274,14 @@ impl Area {
             Area::Tasks => "tasks",
             Area::Jobs => "jobs",
             Area::JobStates => "job-states",
+            Area::PolicyCounts => "policy-counts",
         }
     }
 
     /// The ending of each file's name, without its dot.
     pub fn extension(self) -> &'static str {
         match self {
-            Area::JobStates => "json",
+            Area::JobStates | Area::PolicyCounts => "json",
             _ => "md",
         }
     }
@@ -285,7 +289,7 @@ impl Area {
     /// What a file in this area is, for storage that keeps a content type.
     pub fn content_type(self) -> &'static str {
         match self {
-            Area::JobStates => "application/json; charset=utf-8",
+            Area::JobStates | Area::PolicyCounts => "application/json; charset=utf-8",
             _ => "text/markdown; charset=utf-8",
         }
     }
@@ -479,6 +483,15 @@ mod tests {
         let mut names: Vec<String> = list(dir.path(), Area::Notes).unwrap().into_iter().map(|entry| entry.name).collect();
         names.sort();
         assert_eq!(names, ["plan", "plan (conflicted copy 2026-11-23)"]);
+    }
+
+    #[test]
+    fn keeps_each_computers_policy_counts_as_json_in_their_own_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let area = Area::parse("policy-counts").unwrap();
+        write(dir.path(), area, "a1b2", "{\"2026-11\":{\"kept\":1}}", None).unwrap();
+        assert!(dir.path().join("policy-counts/a1b2.json").exists());
+        assert_eq!(list(dir.path(), area).unwrap()[0].name, "a1b2");
     }
 
     #[test]

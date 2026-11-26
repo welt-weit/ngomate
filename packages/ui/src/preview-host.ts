@@ -403,6 +403,7 @@ function fakeTeams(names: string[], storage: 'folder' | 'webdav' = 'folder'): Te
 export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 	const replies = [...(options.replies ?? [])]
 	// A token of `wrong` is refused, to show what that looks like.
+	let policyRecord: string | null = null
 	const secrets = new Map<string, string>()
 	const conversations = new Map((options.conversations ?? []).map((item) => [item.id, item]))
 	let settings: Settings = {
@@ -435,6 +436,14 @@ export function createFakeHost(options: FakeHostOptions = {}): NgomateHost {
 			truncated: false,
 		}),
 		saveDocument: async () => true,
+		// A made-up written policy: the preview reaches no network.
+		fetchText: async (url) => `# A made-up policy\n\nFetched from ${new URL(url).pathname}.\n`,
+		policyRecord: {
+			read: async () => policyRecord,
+			write: async (text) => {
+				policyRecord = text
+			},
+		},
 		createModelClient: () => ({
 			async chat(request: ChatRequest) {
 				const reply = replies.shift() ?? say('That is all this preview has scripted.')

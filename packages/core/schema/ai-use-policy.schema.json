@@ -1,0 +1,37 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"title": "AI-use policy",
+	"description": "Which data may go where, by how sensitive it is. A policy may hold more than this schema names; readers keep what they do not use. Format 1 is fixed: fields may be added, but none is renamed, dropped or given a new meaning, and the lists of classes and actions do not change; anything else is format 2.",
+	"type": "object",
+	"required": ["schemaVersion", "version", "classes"],
+	"properties": {
+		"schemaVersion": { "const": 1 },
+		"version": { "type": "integer", "minimum": 1, "description": "Goes up with every change." },
+		"template": { "enum": ["open", "standard", "strict", "custom"] },
+		"reviewBy": { "type": "string", "format": "date" },
+		"approvedServers": {
+			"type": "array",
+			"description": "Model servers trusted more than others, by address. A conversation to one follows desktop_approved, which falls back to desktop_remote where a class does not say.",
+			"items": { "type": "string", "format": "uri" }
+		},
+		"rules": {
+			"type": "object",
+			"properties": { "mode": { "enum": ["observe", "enforce"] } },
+			"required": ["mode"]
+		},
+		"classes": {
+			"type": "object",
+			"description": "For each class, what happens at each place data could go. A place left out follows desktop_remote; desktop_remote and desktop_local left out allow.",
+			"propertyNames": {
+				"enum": ["public", "internal", "confidential", "personal", "sensitive_personal", "secret"]
+			},
+			"additionalProperties": {
+				"type": "object",
+				"description": "desktop_local: a model on this computer. desktop_approved: a model server in approvedServers (desktop_remote where left out). desktop_remote: anything else that leaves it, such as another model server or a connector. Other places (a platform's own) may be listed too.",
+				"additionalProperties": {
+					"enum": ["allow", "allow_with_review", "redact", "local_only", "block"]
+				}
+			}
+		}
+	}
+}

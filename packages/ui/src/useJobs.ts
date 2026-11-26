@@ -6,7 +6,6 @@ import {
 	type JobStore,
 	KEPT_RUNS,
 	afterFailure,
-	runDueAt,
 	claimRun,
 	claimWatch,
 	formatSchedule,
@@ -14,6 +13,7 @@ import {
 	newJobState,
 	nextOccurrence,
 	parseJobFile,
+	runDueAt,
 	serializeJobFile,
 } from '@ngomate/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -488,6 +488,13 @@ export function useJobs(
 			document.removeEventListener('visibilitychange', onVisible)
 		}
 	}, [own, reload, check])
+
+	// Ready to run once there is all a run needs (the policies it is held to included): look at once,
+	// rather than a minute later, which matters most when the app was started just for a job.
+	const canRun = runDeps !== null
+	useEffect(() => {
+		if (own && canRun) void check()
+	}, [own, canRun, check])
 
 	// Another team, or none: a run of the old team's job stops, and its jobs leave the list.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the active team's store changes

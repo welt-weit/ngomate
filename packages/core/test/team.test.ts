@@ -6,8 +6,8 @@ import type { ModelClient, ModelReply } from '../src/model.js'
 import {
 	DEFAULT_TEAM_LIMITS,
 	type TeamArea,
-	type TeamNoteCopy,
 	TeamConflict,
+	type TeamNoteCopy,
 	type TeamStore,
 	chooseTeamNotes,
 	createTeamNotes,

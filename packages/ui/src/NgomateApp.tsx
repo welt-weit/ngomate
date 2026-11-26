@@ -1,8 +1,10 @@
 import {
 	DEFAULT_TEAM_LIMITS,
+	type PolicyFile,
 	type PromptDefinition,
 	type TaskFile,
 	TeamConflict,
+	ceilingPolicy,
 	createTeamJobStore,
 	destinationNote,
 	isDue,
@@ -26,6 +28,7 @@ import { AddonsPanel } from './AddonsPanel.js'
 import { Chat, type ChatMaking, type ChatStart } from './Chat.js'
 import { MakeChooser } from './DraftCard.js'
 import { JobDialog, noteNameProblem, toolOptions } from './JobDialog.js'
+import { PolicyPanel } from './PolicyPanel.js'
 import { ProfileMenu } from './ProfileMenu.js'
 import { SettingsPage, type SettingsSection } from './Settings.js'
 import { TabBar, startConversationDrag } from './TabBar.js'
@@ -73,6 +76,7 @@ import {
 	usePrimitives,
 } from './primitives.js'
 import { selectAllInConversation } from './select-all.js'
+import { monthOf, teamCounts } from './teamCounts.js'
 import { listConnectorTools } from './useChat.js'
 import { useIdleUnload } from './useIdleUnload.js'
 import { useJobs } from './useJobs.js'
@@ -91,6 +95,7 @@ const PAGE_TITLES: Record<Page, string> = {
 	model: 'Model',
 	addons: 'Connectors',
 	tools: 'Built-in tools',
+	policy: 'AI-use policy',
 	memory: 'Notes',
 	team: 'Teams',
 	about: 'About',
@@ -333,6 +338,27 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		}
 	}, [host, settings?.model])
 
+	// For a conversation the AI-use policy keeps here while a model server is chosen: the largest
+	// downloaded model the computer has memory for, or none.
+	const getLocalModel = useCallback(async () => {
+		if (!host.models) return null
+		const info = await host.models.info()
+		const fits = info.models
+			.filter((model) => model.installed)
+			.sort((a, b) => b.sizeBytes - a.sizeBytes)
+		const pick = fits.find((model) => model.minRamGb <= info.ramGb) ?? fits.at(-1)
+		if (!pick) return null
+		const { baseUrl, apiKey, contextTokens, searchKnowledgeFirst } = await host.models.start(
+			pick.id,
+		)
+		return {
+			client: host.createModelClient(baseUrl, pick.id, apiKey),
+			contextTokens,
+			searchKnowledgeFirst,
+			name: pick.name,
+		}
+	}, [host])
+
 	const team = useTeam(host, settings?.addons)
 	const teamNotes = team.notes
 
@@ -381,24 +407,74 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 	const seenKey = (item: TeamTask) => `${team.activeId}/${item.task.id}`
 	const teamAddonId = team.location?.type === 'connector' ? team.location.addonId : undefined
 	const teamTasks = useMemo(() => team.tasks.map((item) => item.task), [team.tasks])
+	// This computer's random id for its counts in a team, made the first time one is written; never a name.
+	// Kept in a ref as well, so two answers before the next render share one id rather than make two.
+	const madeCountsId = useRef<string | null>(null)
+	const countsId = useCallback(() => {
+		const current = settingsRef.current
+		if (current?.countsId) return current.countsId
+		if (madeCountsId.current) return madeCountsId.current
+		const id = crypto.randomUUID()
+		madeCountsId.current = id
+		if (current) updateSettings({ ...current, countsId: id })
+		return id
+	}, [updateSettings])
+	// This month's AI-use policy counts across the team, for the person accountable for the policy. The
+	// store is the active team's, so another team gets its counts read again.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the active team decides what the store holds
+	const teamCountsNow = useCallback(async () => {
+		if (!host.team) return { computers: 0, counts: { kept: 0, asked: 0, stopped: 0, watched: 0 } }
+		return teamCounts(host.team.store, monthOf(new Date().toISOString()))
+	}, [host, team.activeId])
+	// The organisation's policy for this computer, read once: it lives in a system folder.
+	const [managedPolicy, setManagedPolicy] = useState<PolicyFile | undefined>()
+	// Looked for once at start; no job runs before, or it could run without the organisation's policy.
+	const [managedChecked, setManagedChecked] = useState(!host.managedPolicy)
+	useEffect(() => {
+		host
+			.managedPolicy?.()
+			.then((text) => text !== null && setManagedPolicy(ceilingPolicy(text)))
+			// The host reports a file it cannot read as text that fails to parse, which counts as Strict;
+			// a failing call says nothing about a file being there, so it imposes nothing.
+			.catch((err) =>
+				console.error('The policy set for this computer could not be looked for:', err),
+			)
+			.finally(() => setManagedChecked(true))
+	}, [host])
 	const deps = useMemo(
 		() => ({
 			host,
 			settings: settings ?? DEFAULT_SETTINGS,
 			getModel,
+			getLocalModel,
 			onSaved: refreshConversations,
 			onBusyChange,
-			team: teamNotes ? { notes: teamNotes, tasks: teamTasks, addonId: teamAddonId } : undefined,
+			managedPolicy,
+			countsId,
+			team: teamNotes
+				? {
+						notes: teamNotes,
+						tasks: teamTasks,
+						addonId: teamAddonId,
+						id: team.activeId ?? undefined,
+						policy: team.file?.policy,
+					}
+				: undefined,
 		}),
 		[
 			host,
 			settings,
 			getModel,
+			getLocalModel,
 			refreshConversations,
 			onBusyChange,
 			teamNotes,
 			teamTasks,
 			teamAddonId,
+			team.activeId,
+			team.file?.policy,
+			managedPolicy,
+			countsId,
 		],
 	)
 
@@ -412,9 +488,11 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 		() => (team.file?.connectors ?? []).map((item) => item.url),
 		[team.file?.connectors],
 	)
+	// A job runs only once every policy it is held to is known: the organisation's and the team's.
+	const policiesKnown = managedChecked && (!team.activeId || team.fileRead)
 	const jobDeps = useMemo(
 		() =>
-			settings
+			settings && policiesKnown
 				? {
 						chat: { ...deps, onBusyChange: idleBusy },
 						tasks: allTasks,
@@ -423,7 +501,7 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 						teamConnectors,
 					}
 				: null,
-		[settings, deps, idleBusy, allTasks, team.tasks, team.activeId, teamConnectors],
+		[settings, policiesKnown, deps, idleBusy, allTasks, team.tasks, team.activeId, teamConnectors],
 	)
 	// A team shares jobs only on S3 or WebDAV, where a write over a changed file is refused at the
 	// storage itself: that is what lets one member's computer claim a run. A synced folder only refuses
@@ -1144,6 +1222,13 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				]
 			: []),
 		{
+			key: 'policy',
+			label: 'AI-use policy',
+			icon: ICONS.shield,
+			open: () => openPage('policy'),
+			active: shown === pageTab('policy'),
+		},
+		{
 			key: 'memory',
 			label: 'Notes',
 			icon: ICONS.memory,
@@ -1186,6 +1271,45 @@ function AppContent({ host, embedded = false }: Pick<NgomateAppProps, 'host' | '
 				sections={{
 					model: <ModelPanel host={host} settings={settings} onChange={updateSettings} />,
 					tools: <ToolsPanel host={host} settings={settings} onChange={updateSettings} />,
+					policy: (
+						<PolicyPanel
+							host={host}
+							settings={settings}
+							onChange={updateSettings}
+							teams={team.memberships}
+							managed={managedPolicy}
+							team={
+								team.file && host.team
+									? {
+											name: team.file.name,
+											policy: team.file.policy,
+											...(team.location?.type === 'connector' || !host.team
+												? {}
+												: { counts: teamCountsNow }),
+											editable: team.settingsEditable,
+											share: async (policy) => {
+												if (!team.file || !host.team) return
+												const { policy: _old, ...rest } = team.file
+												try {
+													await host.team.writeTeamFile(
+														policy ? { ...rest, policy } : rest,
+														team.version,
+													)
+												} catch (err) {
+													if (err instanceof TeamConflict)
+														throw new Error(
+															'Someone in the team changed the team settings meanwhile. Try again.',
+														)
+													throw err
+												} finally {
+													await team.refresh()
+												}
+											},
+										}
+									: undefined
+							}
+						/>
+					),
 					addons: (
 						<AddonsPanel
 							host={host}

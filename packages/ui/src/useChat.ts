@@ -1,7 +1,12 @@
 import {
+	type CallContext,
 	type ChatMessage,
 	type ConfirmWrite,
+	DATA_CLASSES,
+	type DataClass,
 	type ModelClient,
+	type PolicyFile,
+	SAVE_NOTE_TOOL,
 	TEAM_TOOLS,
 	type TaskFile,
 	type TaskProfile,
@@ -16,6 +21,8 @@ import {
 	filterToolSource,
 	fitHistory,
 	isDestructiveTool,
+	mostSensitive,
+	reachesTeamNotes,
 	readDocument,
 	runTask,
 	taskFileToProfile,
@@ -35,8 +42,39 @@ import type {
 	Conversation,
 	NgomateHost,
 	PickedDocument,
+	PolicyNotice,
 	Settings,
 } from './host.js'
+import {
+	CONNECTOR_REFUSED,
+	type PolicyRecordEntry,
+	connectorMayAnswer,
+	documentClass,
+	effectivePolicy,
+	labelled,
+	mayCallConnector,
+	modelApproved,
+	onThisComputer,
+	ownPolicy,
+	planLeaving,
+	policyNotice,
+	recordPolicy,
+	reviewCovers,
+	widerReview,
+} from './policyCheck.js'
+import {
+	type Identifier,
+	type StandIn,
+	addStandIns,
+	findIdentifiers,
+	putBackArgs,
+	standIn,
+	withStandIns,
+} from './standIns.js'
+
+/** The text with stand-ins for what the conversation swaps, or as it is when it swaps nothing. */
+const standInsOr = (text: string, table: StandIn[]) => (table.length ? standIn(text, table) : text)
+import { countForTeam } from './teamCounts.js'
 
 /** For a server the person runs, whose size is unknown. */
 const UNKNOWN_CONTEXT_TOKENS = 8192
@@ -153,6 +191,8 @@ export type SendOptions = {
 	context?: string
 	/** Tools offered whatever the request says, such as a job's fixed send tool. */
 	offerTools?: string[]
+	/** What is asking, for the AI-use policy's record of use. A chat or a task when left out. */
+	feature?: 'job'
 	/**
 	 * For a chat where a task or job is being made: what it may be drafted from. Taken only while the
 	 * conversation has a draft not yet saved; the model then gets the draft tool and nothing else.
@@ -181,10 +221,110 @@ export type ChatDeps = {
 	 * The person's team, when they are in one: its notes beside their own, and its tasks. `addonId` is
 	 * the connector that holds them, if one does: its team tools are reached through memory only.
 	 */
-	team?: { notes: TeamNotes; tasks: TaskFile[]; addonId?: string }
+	team?: { notes: TeamNotes; tasks: TaskFile[]; addonId?: string; id?: string; policy?: PolicyFile }
+	/**
+	 * The model on this computer, for a conversation the AI-use policy keeps here while a model server is
+	 * chosen. Null when none is downloaded.
+	 */
+	/** This computer's random id for its counts in the team's storage, made when first asked for. */
+	countsId?: () => string
+	/** The AI-use policy an organisation set for this computer: a ceiling nothing in the app changes. */
+	managedPolicy?: PolicyFile
+	getLocalModel?: () => Promise<{
+		client: ModelClient
+		contextTokens?: number
+		searchKnowledgeFirst?: boolean
+		/** Its name, said under an answer it gave instead of the model server. */
+		name?: string
+	} | null>
 }
 
 const TEAM_TOOL_NAMES = new Set<string>(Object.values(TEAM_TOOLS))
+
+type PrepareCall = (
+	name: string,
+	args: Record<string, unknown>,
+	context?: CallContext,
+) => Record<string, unknown>
+
+/** What a conversation holds before an answer: what it held, its documents, and the notes it reads. */
+export function heldBefore(
+	deps: ChatDeps,
+	read: { earlier?: DataClass[]; documents: PickedDocument[]; notesRead: boolean },
+): DataClass[] {
+	const labels = deps.settings.labels
+	const held = new Set<DataClass>(read.earlier ?? [])
+	for (const document of read.documents) held.add(documentClass(document, labels))
+	if (read.notesRead) {
+		held.add(labelled(labels?.notes))
+		if (deps.team) held.add(labelled(deps.team.id ? labels?.teams?.[deps.team.id] : undefined))
+	}
+	return DATA_CLASSES.filter((each) => held.has(each))
+}
+
+/** The labels of the connectors an answer called, for what their results brought in. */
+const connectorClasses = (deps: ChatDeps, used: Iterable<string>) =>
+	[...used]
+		.filter((id) => id !== 'memory')
+		.map((id) => labelled(deps.settings.labels?.connectors?.[id]))
+
+/**
+ * What the AI-use policy makes of one answer that went ahead: every class the conversation now holds,
+ * and the line for under the answer about what would have been held back.
+ */
+function policyFor(
+	deps: ChatDeps,
+	policy: PolicyFile | undefined,
+	before: DataClass[],
+	used: Set<string>,
+	modelLocal: boolean,
+	approved = false,
+): { classes: DataClass[]; notice: PolicyNotice | null } {
+	const brought = connectorClasses(deps, used)
+	const all = new Set([...before, ...brought])
+	const classes = DATA_CLASSES.filter((each) => all.has(each))
+	return {
+		classes,
+		notice: policyNotice(policy, {
+			model: { classes, local: modelLocal, approved },
+			...(brought.length ? { connector: before } : {}),
+		}),
+	}
+}
+
+/**
+ * A tool source that says when it is called, and may refuse a call: `guard` returns the words a refused
+ * call gets back, for the AI-use policy.
+ */
+function noteUse(
+	source: ToolSource,
+	id: string,
+	onUse?: (id: string) => void,
+	guard?: (id: string) => string | null,
+	/** Changes a call's arguments before it is made: the real values back for notes kept here. */
+	prepare?: PrepareCall,
+): ToolSource {
+	if (!onUse && !guard && !prepare) return source
+	return {
+		listTools: () => source.listTools(),
+		callTool: async (name, args, context) => {
+			const refused = guard?.(id)
+			if (refused) return { text: refused, isError: true }
+			onUse?.(id)
+			return source.callTool(name, prepare ? prepare(name, args, context) : args, context)
+		},
+		...(source.listPrompts
+			? { listPrompts: () => source.listPrompts?.() ?? Promise.resolve([]) }
+			: {}),
+		...(source.getPrompt
+			? {
+					getPrompt: (name: string, args: Record<string, string>) =>
+						source.getPrompt?.(name, args) ?? Promise.resolve(''),
+				}
+			: {}),
+		close: () => source.close(),
+	}
+}
 
 function connectTools(
 	host: NgomateHost,
@@ -192,23 +332,45 @@ function connectTools(
 	withMemory: boolean,
 	onProblem: (name: string) => void,
 	team?: { notes: TeamNotes; addonId?: string },
+	/** Told which source each call went to (`memory`, or a connector's id), for the AI-use policy. */
+	onUse?: (sourceId: string) => void,
+	/** Refuses a call to a source, with the words it gets back; null lets it through. */
+	guard?: (sourceId: string) => string | null,
+	/** Changes the arguments of a call to the person's notes before it is made. */
+	prepareNotes?: PrepareCall,
 ): Promise<ToolSource> {
 	return (async () => {
 		const sources = withMemory
-			? [{ id: 'memory', source: createMemoryToolSource(host.memory, team?.notes) }]
+			? [
+					{
+						id: 'memory',
+						source: noteUse(
+							createMemoryToolSource(host.memory, team?.notes),
+							'memory',
+							onUse,
+							undefined,
+							prepareNotes,
+						),
+					},
+				]
 			: []
 		for (const addon of addons.filter((candidate) => candidate.enabled)) {
 			try {
 				const source = await host.connectAddon(addon)
 				sources.push({
 					id: addon.id,
-					source: filterToolSource(
-						source,
-						(tool) =>
-							!addon.disabledTools?.includes(tool.name) &&
-							(addon.allowDestructive || !isDestructiveTool(tool)) &&
-							// Saved through the memory tools, where the person picks; never written around them.
-							!(addon.id === team?.addonId && TEAM_TOOL_NAMES.has(tool.name)),
+					source: noteUse(
+						filterToolSource(
+							source,
+							(tool) =>
+								!addon.disabledTools?.includes(tool.name) &&
+								(addon.allowDestructive || !isDestructiveTool(tool)) &&
+								// Saved through the memory tools, where the person picks; never written around them.
+								!(addon.id === team?.addonId && TEAM_TOOL_NAMES.has(tool.name)),
+						),
+						addon.id,
+						onUse,
+						guard,
 					),
 				})
 			} catch {
@@ -263,11 +425,25 @@ export function missingConnector(deps: ChatDeps, task: TaskFile | undefined): st
 	return `${task.title} needs a connected tool. Add one under Connectors, such as a search service or Action Network Worldwide.`
 }
 
+/** The person's answer before a conversation leaves: no, yes as it is, or yes with these taken out. */
+export type LeaveAnswer = boolean | { takeOut: Identifier[] }
+
 /** What happens while an answer is written, for a window showing it. All optional but the first three. */
 export type AnswerHooks = {
 	signal: AbortSignal
 	/** Asked before anything is changed. A run nobody is watching refuses and records what was asked. */
 	confirmWrite: ConfirmWrite
+	/**
+	 * Asked once per conversation when the AI-use policy wants the person to confirm before something
+	 * leaves. Without it (a job no one watches) nothing is sent.
+	 */
+	confirmLeave?: (
+		notice: PolicyNotice,
+		/** What in the conversation looks like it says who someone is, and was not decided on before. */
+		found: Identifier[],
+		/** The message as typed, to show what leaves. */
+		message: string,
+	) => Promise<LeaveAnswer>
 	/** The conversation as it stands, kept before the model is asked and again with its answer. */
 	save: (conversation: Conversation) => Promise<void>
 	onStartingModel?: (starting: boolean) => void
@@ -289,7 +465,12 @@ export type AnswerResult = {
 	/** The answer and what the checks found, when there is one. */
 	answer: string | null
 	notice: AnswerNotice | null
+	/** Not sent, because the AI-use policy kept it from leaving or no one confirmed it. */
+	refused?: boolean
 }
+
+/** Not sent because of the AI-use policy, rather than a failure to try again. */
+class PolicyRefusal extends Error {}
 
 /**
  * Sends one message and keeps the conversation with its answer: the chat in a window and a job no one
@@ -378,12 +559,120 @@ export async function answerRequest(
 			documents: allDocuments,
 		})
 
+		// The AI-use policy: what the conversation holds decides where it may go, before anything leaves.
+		const policy = effectivePolicy(ownPolicy(deps.settings), deps.team?.policy, deps.managedPolicy)
+		const modelLocal = onThisComputer(deps.settings.model)
+		const approved = modelApproved(policy, deps.settings.model)
+		const notesRead =
+			!making && (Boolean(deps.team) || (await host.memory.list().catch(() => [])).length > 0)
+		const before = heldBefore(deps, {
+			earlier: current.classes,
+			documents: allDocuments,
+			notesRead,
+		})
+		// What the person said the conversation counts as weighs in, but is not kept as held: they can take it back.
+		const planned = current.countsAs
+			? DATA_CLASSES.filter((each) => each === current.countsAs || before.includes(each))
+			: before
+		// Who the conversation is about, taken out before it leaves when the person chose so.
+		let standIns = current.standIns ?? []
+		let sentAsIs = current.sentAsIs ?? []
+		const decided = new Set([...standIns.map((each) => each.real), ...sentAsIs])
+		const found = findIdentifiers([
+			request,
+			...allDocuments.map((document) => document.text),
+			...current.messages.map((message) =>
+				typeof message.content === 'string' ? message.content : '',
+			),
+		]).filter((each) => !decided.has(each.text))
+		// The person's own choice: nothing leaves this conversation, whatever the policy allows.
+		const keptHere = Boolean(current.keepHere)
+		let reviewed = false
+		const planFor = () =>
+			planLeaving(policy, planned, {
+				modelLocal,
+				modelApproved: approved,
+				reviewed,
+				keepHere: keptHere,
+			})
+		// A yes counts only for what it was given for: data no more sensitive, and the model server only
+		// when that was asked. Something new that says who someone is is offered again, unless the
+		// conversation already swaps such things unasked.
+		const wouldAsk = planFor().review
+		reviewed =
+			reviewCovers(current.reviewedFor, planned, !modelLocal) &&
+			!(wouldAsk?.action === 'redact' && found.length > 0 && standIns.length === 0)
+		let reviewedFor = current.reviewedFor
+		let plan = planFor()
+		if (plan.review) {
+			const answer = await hooks.confirmLeave?.(plan.review, found, request)
+			if (typeof answer === 'object') {
+				standIns = addStandIns(standIns, answer.takeOut)
+				const taken = new Set(answer.takeOut.map((each) => each.text))
+				sentAsIs = [
+					...sentAsIs,
+					...found.filter((each) => !taken.has(each.text)).map((each) => each.text),
+				]
+			}
+			if (!answer) {
+				return {
+					...nothing,
+					conversation: latest,
+					error:
+						'Not sent: your AI-use policy asks you first, and this was not confirmed. Send it again to be asked.',
+					refused: true,
+				}
+			}
+			reviewed = true
+			reviewedFor = widerReview(reviewedFor, plan.review)
+			plan = planFor()
+		}
+		// Taken out once in this conversation: what is new of the same kind is taken out too, unasked.
+		else if (standIns.length && found.length) standIns = addStandIns(standIns, found)
+		if (plan.refuse) return { ...nothing, conversation: latest, error: plan.refuse, refused: true }
+		const answersHere = modelLocal || Boolean(plan.useLocalModel)
+		// The connectors this answer may use: all, none, or those whose results may reach its model.
+		const offered = deps.settings.addons.filter(
+			(addon) =>
+				plan.connectors === 'all' ||
+				(plan.connectors === 'allowed' &&
+					connectorMayAnswer(
+						policy,
+						labelled(deps.settings.labels?.connectors?.[addon.id]),
+						answersHere,
+						reviewed,
+						approved,
+					)),
+		)
+		const leftOut = deps.settings.addons.some((addon) => addon.enabled && !offered.includes(addon))
+
 		hooks.onStartingModel?.(true)
+		let localName: string | undefined
+		const chosen = plan.useLocalModel
+			? deps.getLocalModel?.().then((local) => {
+					if (local) {
+						localName = local.name
+						return local
+					}
+					throw new PolicyRefusal(
+						keptHere
+							? 'Not sent: you chose to keep this conversation on this computer, and no model is downloaded here. Download one under Model.'
+							: 'Not sent: your AI-use policy keeps this conversation on this computer, and no model is downloaded here. Download one under Model.',
+					)
+				})
+			: deps.getModel()
 		const {
 			client: model,
 			contextTokens,
 			searchKnowledgeFirst,
-		} = await deps.getModel().finally(() => hooks.onStartingModel?.(false))
+		} = await (
+			chosen ??
+			Promise.reject(
+				new PolicyRefusal(
+					'Not sent: your AI-use policy keeps this conversation on this computer, and this app cannot run a model here.',
+				),
+			)
+		).finally(() => hooks.onStartingModel?.(false))
 		waited.startMs = Math.round(performance.now() - sentAt)
 		const room = textBudget(contextTokens)
 		hooks.onBudget?.(room)
@@ -397,6 +686,8 @@ export async function answerRequest(
 		}))
 		const attachments = blocks.map((block) => block.text).join('\n\n')
 		const seen = new Set<string>()
+		// The sources this answer called: `memory`, or a connector's id. For the AI-use policy.
+		const used = new Set<string>()
 		// A ready-made task gets notes as context, not as tools that distract a small model from the job.
 		const team = deps.team
 		tools = making
@@ -413,13 +704,35 @@ export async function answerRequest(
 				)
 			: await connectTools(
 					host,
-					deps.settings.addons,
+					offered,
 					!task,
 					(name) => {
 						if (!seen.has(name)) hooks.onProblem?.(name)
 						seen.add(name)
 					},
 					team,
+					(id) => used.add(id),
+					// What the conversation holds now, the results of other connectors included, goes with a call.
+					(id) =>
+						mayCallConnector(
+							policy,
+							[
+								...before,
+								...connectorClasses(
+									deps,
+									[...used].filter((other) => other !== id),
+								),
+							],
+							reviewed,
+						)
+							? null
+							: CONNECTOR_REFUSED,
+					// The person's own notes stay on this computer, so they keep the real values; a team
+					// note keeps the stand-ins, as a connector does.
+					standIns.length
+						? (name, args, context) =>
+								reachesTeamNotes(name, args, context) ? args : putBackArgs(args, standIns)
+						: undefined,
 				)
 
 		const memory = making
@@ -442,9 +755,10 @@ export async function answerRequest(
 		// answer off course, and a knowledge base of field practice has nothing for them anyway. A model
 		// that seldom asks, or answers without reading what a search it asked for found, is searched for.
 		const knowledge =
-			!task && !making && text.trim() && deps.settings.addons.some((addon) => addon.enabled)
+			!task && !making && text.trim() && offered.some((addon) => addon.enabled)
 				? {
-						query: passageQuery(text, current.messages),
+						// The search is a connector too: it gets the stand-ins, never the real values.
+						query: standInsOr(passageQuery(text, current.messages), standIns),
 						maxChars: room.knowledge,
 						onRequest: !searchKnowledgeFirst,
 					}
@@ -464,8 +778,10 @@ export async function answerRequest(
 
 		// Nothing appears until the model has read it, which on a long document is most of the wait.
 		hooks.onReadingDocument?.(allDocuments.length > 0)
+		// What leaves carries stand-ins: to a model server, and through the model to its connectors.
+		const swapping = standIns.length > 0 && (!answersHere || offered.length > 0)
 		const run = await runTask({
-			model,
+			model: swapping ? withStandIns(model, standIns) : model,
 			tools,
 			profile: makingProfile ?? (task ? taskFileToProfile(task) : CHAT_PROFILE),
 			input,
@@ -479,7 +795,32 @@ export async function answerRequest(
 			maxToolChars: room.tools,
 			offerTools: options.offerTools,
 			maxOutputTokens: room.output,
-			confirmWrite: hooks.confirmWrite,
+			// A note kept here is saved with the real values, so it is shown with them; anything else is
+			// shown exactly as it will be sent, stand-ins and all.
+			confirmWrite: standIns.length
+				? (write) =>
+						hooks.confirmWrite(
+							write.tool === SAVE_NOTE_TOOL
+								? {
+										...write,
+										args: putBackArgs(write.args, standIns),
+										// Shown with the real values; saved for the team, it keeps the stand-ins.
+										...(write.choices
+											? {
+													choices: write.choices.map((choice) =>
+														choice.id === 'team'
+															? {
+																	...choice,
+																	label: `${choice.label}, with stand-ins such as [PERSON_1] for who it is about`,
+																}
+															: choice,
+													),
+												}
+											: {}),
+									}
+								: write,
+						)
+				: hooks.confirmWrite,
 			signal: hooks.signal,
 			onText: (piece) => {
 				waited.firstWordMs ??= Math.round(performance.now() - sentAt)
@@ -508,6 +849,7 @@ export async function answerRequest(
 			messages.push({ role: 'assistant', content: written })
 		const notices = { ...current.notices }
 		let notice: AnswerNotice | null = null
+		let classes: DataClass[] = current.classes ?? []
 		if (run.answer) {
 			notice = {
 				unsourcedDates: run.unsourcedDates,
@@ -532,6 +874,68 @@ export async function answerRequest(
 					hiddenMs: hiddenMs(),
 				},
 			}
+			if (swapping) notice.tookOut = standIns.length
+			const held = policyFor(
+				deps,
+				policy,
+				planned,
+				used,
+				modelLocal,
+				!plan.useLocalModel && approved,
+			)
+			// Kept as held: what came in, not what the person said, which they can take back.
+			const brought = connectorClasses(deps, used)
+			const kept = DATA_CLASSES.filter((each) => before.includes(each) || brought.includes(each))
+			if (keptHere) {
+				held.notice = null
+				notice.keptHere = plan.useLocalModel && localName ? { model: localName } : {}
+			}
+			// Kept to: say what was held back. Everything else went where it was allowed to.
+			else if (policy?.rules?.mode === 'enforce')
+				held.notice =
+					plan.useLocalModel || leftOut
+						? {
+								action: 'local_only',
+								// Left out for what its own results would bring in, not for what the conversation holds.
+								dataClass:
+									plan.connectors === 'allowed' && !plan.useLocalModel
+										? mostSensitive(
+												deps.settings.addons
+													.filter((addon) => addon.enabled && !offered.includes(addon))
+													.map((addon) => labelled(deps.settings.labels?.connectors?.[addon.id])),
+											)
+										: mostSensitive(planned),
+								where: [
+									...(plan.useLocalModel ? (['model'] as const) : []),
+									...(leftOut ? (['connector'] as const) : []),
+								],
+								observed: false,
+								...(policy.template ? { template: policy.template } : {}),
+								...(plan.useLocalModel && localName ? { localModel: localName } : {}),
+							}
+						: null
+			if (held.notice) {
+				notice.policy = held.notice
+				const entry: PolicyRecordEntry = {
+					at: new Date().toISOString(),
+					feature: options.feature ?? (task ? 'task' : 'chat'),
+					where: held.notice.where,
+					dataClass: held.notice.dataClass,
+					action: held.notice.action,
+					observed: held.notice.observed,
+					template: policy?.template,
+					version: policy?.version ?? 0,
+				}
+				recordPolicy(host, entry).catch((err) =>
+					console.error('The record of use could not be written:', err),
+				)
+				// The team's counts, in its own storage; a team kept by a connector keeps none.
+				if (deps.team && !deps.team.addonId && host.team && deps.countsId)
+					countForTeam(host.team.store, deps.countsId(), entry).catch((err) =>
+						console.error("The team's counts could not be written:", err),
+					)
+			}
+			classes = kept
 			notices[messages.length - 1] = notice
 			times[messages.length - 1] = new Date().toISOString()
 		} else if (STOPPED[run.status]) {
@@ -547,6 +951,10 @@ export async function answerRequest(
 			tasks,
 			documents: allDocuments,
 			...(draft ? { draft } : {}),
+			...(classes.length ? { classes } : {}),
+			...(reviewedFor ? { reviewedFor } : {}),
+			...(standIns.length ? { standIns } : {}),
+			...(sentAsIs.length ? { sentAsIs } : {}),
 		})
 		return { conversation: latest, error, answer: run.answer ?? null, notice }
 	} catch (err) {
@@ -555,6 +963,7 @@ export async function answerRequest(
 			error: err instanceof Error ? err.message : String(err),
 			answer: null,
 			notice: null,
+			...(err instanceof PolicyRefusal ? { refused: true } : {}),
 		}
 	} finally {
 		document.removeEventListener('visibilitychange', onVisibility)
@@ -577,6 +986,13 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 	const [error, setError] = useState<string | null>(null)
 	const [problems, setProblems] = useState<string[]>([])
 	const [pendingWrite, setPendingWrite] = useState<PendingWrite | null>(null)
+	// The AI-use policy asking once whether this conversation may leave the computer.
+	const [pendingLeave, setPendingLeave] = useState<{
+		notice: PolicyNotice
+		found: Identifier[]
+		message: string
+		resolve: (answer: LeaveAnswer) => void
+	} | null>(null)
 	const [startingModel, setStartingModel] = useState(false)
 	const [readingDocument, setReadingDocument] = useState(false)
 	const [budget, setBudget] = useState(() => textBudget())
@@ -668,10 +1084,29 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 						},
 					})
 				})
+			const confirmLeave = (notice: PolicyNotice, found: Identifier[], message: string) =>
+				new Promise<LeaveAnswer>((resolve) => {
+					const onAbort = () => {
+						setPendingLeave(null)
+						resolve(false)
+					}
+					controller.signal.addEventListener('abort', onAbort, { once: true })
+					setPendingLeave({
+						notice,
+						found,
+						message,
+						resolve: (answer) => {
+							controller.signal.removeEventListener('abort', onAbort)
+							setPendingLeave(null)
+							resolve(answer)
+						},
+					})
+				})
 			try {
 				const result = await answerRequest(depsRef.current, current, text, options, {
 					signal: controller.signal,
 					confirmWrite,
+					confirmLeave,
 					save,
 					onStartingModel: setStartingModel,
 					onBudget: setBudget,
@@ -761,6 +1196,24 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 		[conversation, save],
 	)
 
+	/** What the person says this conversation counts as, or nothing to take it back. */
+	const setCountsAs = useCallback(
+		(dataClass: DataClass | undefined) => {
+			const { countsAs: _, ...rest } = conversation
+			return save(dataClass ? { ...rest, countsAs: dataClass } : rest)
+		},
+		[conversation, save],
+	)
+
+	/** Keeps this conversation on this computer, or lets it go where the policy allows again. */
+	const setKeepHere = useCallback(
+		(on: boolean) => {
+			const { keepHere: _, ...rest } = conversation
+			return save(on ? { ...rest, keepHere: true } : rest)
+		},
+		[conversation, save],
+	)
+
 	return {
 		conversation,
 		streaming,
@@ -772,10 +1225,13 @@ export function useChat(deps: ChatDeps, conversationId: string) {
 		error,
 		problems,
 		pendingWrite,
+		pendingLeave,
 		send,
 		retry,
 		stop,
 		removeDocument,
+		setCountsAs,
+		setKeepHere,
 		updateDraft,
 		loaded,
 		latest,

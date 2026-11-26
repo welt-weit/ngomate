@@ -15,6 +15,7 @@ import {
 } from '@ngomate/core'
 import { makeId } from './format.js'
 import type { AnswerNotice } from './host.js'
+import { effectivePolicy, mayCallConnector, ownPolicy } from './policyCheck.js'
 import { type ChatDeps, answerRequest, makeChange, newConversation } from './useChat.js'
 import type { TeamTask } from './useTeam.js'
 
@@ -241,7 +242,7 @@ export async function runJob(
 		conversation,
 		job.inputs,
 		// Its fixed send tool is offered even when the job's words do not name it, or it could never send.
-		{ task, context, ...(job.send ? { offerTools: [job.send.tool] } : {}) },
+		{ task, context, feature: 'job', ...(job.send ? { offerTools: [job.send.tool] } : {}) },
 		{
 			signal,
 			// Nobody is there to ask, so every change is refused here and waits for the person, save a message
@@ -267,13 +268,47 @@ export async function runJob(
 	const conversationId = result.conversation.messages.length ? result.conversation.id : undefined
 	// Stopped because the app closed or the team changed: not a try, so the job runs again as it was.
 	if (signal.aborted) return state
+	// Not a failure to try again: the AI-use policy kept it, or wanted someone to confirm.
+	if (result.refused)
+		return held(result.error ?? 'Your AI-use policy kept this run from going ahead.')
 	if (!result.answer) return failed(result.error ?? 'The model gave no answer.', conversationId)
+
+	// The AI-use policy: what this run read decides whether its result and messages may leave.
+	const policy = effectivePolicy(
+		ownPolicy(deps.chat.settings),
+		deps.chat.team?.policy,
+		deps.chat.managedPolicy,
+	)
+	const keptHere = !mayCallConnector(policy, result.conversation.classes ?? [])
+	// The team's notes kept by a connector leave this computer like any connector call; in a shared
+	// folder they are team storage, which the policy does not cover.
+	const leaves =
+		job.destination.kind === 'tool' ||
+		(job.destination.kind === 'team-note' && Boolean(deps.chat.team?.addonId))
+	if (keptHere && leaves)
+		return afterRun(
+			state,
+			job,
+			{
+				...run,
+				outcome: 'held',
+				reason:
+					job.destination.kind === 'tool'
+						? `Your AI-use policy keeps what this run read on this computer, so its result was not written to ${job.destination.name}. Make the job write to a note or a file.`
+						: "Your AI-use policy keeps what this run read on this computer, and the team's notes are kept by a connector, so its result was not written there.",
+				conversationId,
+			},
+			ranAt,
+		)
 
 	const checks = checkLines(result.notice)
 	// A message for the fixed recipients goes on its own only when the checks found nothing: otherwise
 	// the person reads the result first, as for any change.
 	for (const change of changes) {
-		if (change.auto && checks.length)
+		if (change.auto && keptHere)
+			change.held =
+				'Your AI-use policy keeps what this run read on this computer, so it waits for you instead of going on its own.'
+		else if (change.auto && checks.length)
 			change.held =
 				'The checks found something in this run, so it waits for you instead of going on its own.'
 	}
